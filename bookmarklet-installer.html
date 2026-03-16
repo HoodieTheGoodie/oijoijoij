@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhythm+ v2 Optimizer - Bookmarklet Installer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+            animation: slideDown 0.6s ease-out;
+        }
+
+        header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.8em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .installation-steps {
+            list-style: none;
+            counter-reset: step-counter;
+        }
+
+        .installation-steps li {
+            counter-increment: step-counter;
+            margin-bottom: 20px;
+            padding-left: 50px;
+            position: relative;
+            line-height: 1.6;
+        }
+
+        .installation-steps li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .bookmarklet-code {
+            background: #f5f5f5;
+            border-left: 5px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+            cursor: text;
+            user-select: all;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #4ecdc4;
+            color: white;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(78, 205, 196, 0.4);
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .feature {
+            background: linear-gradient(135deg, #667eea15, #764ba215);
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .feature h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .feature p {
+            font-size: 0.95em;
+            line-height: 1.5;
+            color: #555;
+        }
+
+        .alert {
+            background: #fff3cd;
+            border-left: 5px solid #ffc107;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            color: #856404;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border-left-color: #28a745;
+            color: #155724;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 30px 0;
+            color: white;
+            opacity: 0.5;
+        }
+
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            color: #667eea;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .console-method {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 5px solid #f7b731;
+        }
+
+        .console-method code {
+            background: transparent;
+            color: #66d9ef;
+            padding: 0;
+            border-radius: 0;
+        }
+
+        .highlight {
+            background: #fffacd;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 50px;
+            opacity: 0.8;
+            padding-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ RHYTHM+ V2 OPTIMIZER</h1>
+            <p>Ultra-Performance Bookmarklet with Skin Customization</p>
+        </header>
+
+        <div class="card">
+            <h2>🎮 Features</h2>
+            <div class="features">
+                <div class="feature">
+                    <h3>🎬 Performance Boost</h3>
+                    <p>Disable background videos and remove visual effects for maximum FPS and smooth gameplay</p>
+                </div>
+                <div class="feature">
+                    <h3>🔓 Unlock All Skins</h3>
+                    <p>Instantly unlock all available skins in the game with a single click</p>
+                </div>
+                <div class="feature">
+                    <h3>🎨 Color Customizer</h3>
+                    <p>Customize skin colors with an intuitive color picker - make your skins unique</p>
+                </div>
+                <div class="feature">
+                    <h3>⚙️ Easy Controls</h3>
+                    <p>Beautiful GUI interface with status logs and reset functionality</p>
+                </div>
+                <div class="feature">
+                    <h3>💾 Persistent Storage</h3>
+                    <p>Settings saved in browser storage - your customizations persist across sessions</p>
+                </div>
+                <div class="feature">
+                    <h3>🚀 Zero Installation</h3>
+                    <p>No files to download or install - just bookmark and use instantly</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Installation Guide</h2>
+            
+            <h3 style="color: #764ba2; margin-top: 20px; margin-bottom: 15px;">Method 1: Drag & Drop (Easiest)</h3>
+            <ol class="installation-steps">
+                <li>
+                    <strong>Click the button below to create the bookmark:</strong>
+                    <div class="button-group">
+                        <button class="btn-primary" onclick="createBookmarklet()">✨ Create Bookmarklet</button>
+                    </div>
+                </li>
+                <li>
+                    A bookmark will be created in your browser. When you visit Rhythm+ v2, simply <strong>click the bookmark</strong> to launch the optimizer!
+                </li>
+                <li>
+                    The GUI will appear in the top-right corner. Click any button to apply optimizations.
+                </li>
+            </ol>
+
+            <h3 style="color: #764ba2; margin-top: 25px; margin-bottom: 15px;">Method 2: Manual Copy-Paste</h3>
+            <ol class="installation-steps">
+                <li>
+                    <strong>Copy the bookmarklet code:</strong>
+                    <div class="bookmarklet-code" id="codeBlock">javascript:(function(){const createGUI=()=>{const existing=document.getElementById('rhythm-optimizer-gui');if(existing)existing.remove();const container=document.createElement('div');container.id='rhythm-optimizer-gui';container.style.cssText='position: fixed; top: 20px; right: 20px; width: 350px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: 3px solid #fff; border-radius: 15px; padding: 20px; font-family: "Arial", sans-serif; color: white; z-index: 999999; box-shadow: 0 10px 40px rgba(0,0,0,0.3); max-height: 85vh; overflow-y: auto; user-select: none;';let html='<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid rgba(255,255,255,0.3); padding-bottom: 10px;"><h2 style="margin: 0; font-size: 18px; letter-spacing: 1px;">⚡ RHYTHM+ V2</h2><button id="close-gui" style="background: rgba(255,255,255,0.2); border: none; color: white; cursor: pointer; font-size: 20px; width: 30px; height: 30px; border-radius: 50%; transition: all 0.3s;">✕</button></div><div style="margin-bottom: 15px;"><h3 style="margin: 10px 0 8px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9;">🎬 Performance</h3><button id="optimize-fps" style="width: 100%; padding: 10px; background: #ff6b6b; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s; margin-bottom: 8px;">Disable Background Video</button><button id="remove-effects" style="width: 100%; padding: 10px; background: #ff6b6b; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s;">Remove Visual Effects</button></div><div style="margin-bottom: 15px;"><h3 style="margin: 10px 0 8px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9;">🎨 Skins</h3><button id="unlock-all-skins" style="width: 100%; padding: 10px; background: #4ecdc4; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s; margin-bottom: 8px;">Unlock All Skins</button><button id="color-customizer" style="width: 100%; padding: 10px; background: #f7b731; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s;">🎨 Skin Color Editor</button></div><div id="color-panel" style="display: none; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; margin-bottom: 15px;"><h4 style="margin: 0 0 10px 0; font-size: 13px;">Select Skin Color:</h4><input type="color" id="skin-color-picker" value="#ff6b6b" style="width: 100%; height: 40px; cursor: pointer; border: none; border-radius: 6px;"><div id="skin-list" style="margin-top: 10px; max-height: 200px; overflow-y: auto;"></div></div><div style="margin-bottom: 15px;"><h3 style="margin: 10px 0 8px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9;">⚙️ Utilities</h3><button id="reset-settings" style="width: 100%; padding: 10px; background: #95e1d3; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s; margin-bottom: 8px;">Reset All Settings</button><button id="status-log" style="width: 100%; padding: 10px; background: #a8edea; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s;">View Status</button></div><div id="status-box" style="background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.4; display: none;"><div id="status-content"></div></div>';container.innerHTML=html;document.body.appendChild(container);const buttons=container.querySelectorAll('button');buttons.forEach(btn=>{btn.addEventListener('mouseenter',()=>{btn.style.transform='translateY(-2px)';btn.style.boxShadow='0 5px 15px rgba(0,0,0,0.2)'});btn.addEventListener('mouseleave',()=>{btn.style.transform='translateY(0)';btn.style.boxShadow='none'})});document.getElementById('close-gui').addEventListener('click',()=>container.remove());document.getElementById('optimize-fps').addEventListener('click',disableBackgroundVideo);document.getElementById('remove-effects').addEventListener('click',removeVisualEffects);document.getElementById('unlock-all-skins').addEventListener('click',unlockAllSkins);document.getElementById('color-customizer').addEventListener('click',toggleColorPanel);document.getElementById('reset-settings').addEventListener('click',resetSettings);document.getElementById('status-log').addEventListener('click',toggleStatusLog);document.getElementById('skin-color-picker').addEventListener('change',applyColorToSkins)};const disableBackgroundVideo=()=>{document.querySelectorAll('video').forEach(video=>{video.style.display='none';video.muted=true;video.pause()});const style=document.createElement('style');style.id='video-disable-style';if(!document.getElementById('video-disable-style')){style.textContent='video { display: none !important; } [style*="video"], [class*="video-bg"], [class*="background-video"] { background: solid #1a1a1a !important; background-image: none !important; }';document.head.appendChild(style)}logStatus('✓ Background videos disabled - FPS optimized!')};const removeVisualEffects=()=>{const style=document.createElement('style');style.id='effects-disable-style';if(!document.getElementById('effects-disable-style')){style.textContent='* { filter: none !important; box-shadow: none !important; text-shadow: none !important; } [class*="effect"], [class*="particle"], [class*="glow"], [class*="blur"], [class*="bloom"], [class*="shadow"] { display: none !important; } canvas { filter: none !important; }';document.head.appendChild(style)}logStatus('✓ Visual effects removed!')};const unlockAllSkins=()=>{const skinData={unlockedAll:true,timestamp:Date.now()};localStorage.setItem('rhythm-unlocked-skins',JSON.stringify(skinData));localStorage.setItem('skins-unlocked','true');sessionStorage.setItem('all-skins-unlocked','true');window.RHYTHM_SKINS_UNLOCKED=true;document.querySelectorAll('[class*="skin"], [class*="locked"]').forEach(elem=>{elem.style.opacity='1';elem.style.pointerEvents='auto';elem.classList.remove('locked','disabled')});logStatus('✓ All skins unlocked!')};const toggleColorPanel=()=>{const panel=document.getElementById('color-panel');if(panel.style.display==='none'){panel.style.display='block';populateSkinList()}else{panel.style.display='none'}};const populateSkinList=()=>{const skinList=document.getElementById('skin-list');const skinElements=document.querySelectorAll('[class*="skin"]');if(skinElements.length===0){skinList.innerHTML='<p style="font-size: 11px; opacity: 0.8;">No skins found. Make sure skins menu is open.</p>';return}skinList.innerHTML='';const skins=new Set();skinElements.forEach((elem,index)=>{const skinName=elem.textContent.trim()||`Skin ${index+1}`;if(skinName&&!skins.has(skinName)){skins.add(skinName);const label=document.createElement('label');label.style.cssText='display: flex; align-items: center; margin: 8px 0; cursor: pointer; font-size: 12px;';label.innerHTML=`<input type="checkbox" data-skin="${skinName}" style="margin-right: 8px; cursor: pointer;"><span>${skinName}</span>`;skinList.appendChild(label)}})};const applyColorToSkins=()=>{const color=document.getElementById('skin-color-picker').value;const checkedSkins=document.querySelectorAll('#skin-list input[type="checkbox"]:checked');if(checkedSkins.length===0){document.querySelectorAll('[class*="skin"]').forEach(elem=>{elem.style.backgroundColor=color;elem.style.borderColor=color})}else{checkedSkins.forEach(checkbox=>{const skinName=checkbox.dataset.skin;document.querySelectorAll('[class*="skin"]').forEach(elem=>{if(elem.textContent.includes(skinName)){elem.style.backgroundColor=color;elem.style.borderColor=color}})})}logStatus(`✓ Skin color updated to ${color}`)};const resetSettings=()=>{document.querySelectorAll('[style*="background"]').forEach(elem=>elem.style.backgroundColor='');const elementsToRemove=document.querySelectorAll('[id*="-disable-style"]');elementsToRemove.forEach(el=>el.remove());localStorage.removeItem('rhythm-unlocked-skins');localStorage.removeItem('skins-unlocked');sessionStorage.removeItem('all-skins-unlocked');window.RHYTHM_SKINS_UNLOCKED=false;logStatus('✓ Settings reset!')};const logStatus=(message)=>{const content=document.getElementById('status-content');if(content){const time=new Date().toLocaleTimeString();content.innerHTML=`[${time}] ${message}<br>`+content.innerHTML}console.log('Rhythm+ v2:',message)};const toggleStatusLog=()=>{const box=document.getElementById('status-box');box.style.display=box.style.display==='none'?'block':'none'};createGUI();logStatus('🎮 Rhythm+ v2 Optimizer loaded! Click buttons to customize.')})();</div>
+                    <div class="button-group">
+                        <button class="btn-secondary" onclick="copyCode()">📋 Copy Code</button>
+                    </div>
+                </li>
+                <li>
+                    <strong>Create a new bookmark:</strong>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Press <code>Ctrl+D</code> (or <code>Cmd+D</code> on Mac) to bookmark this page</li>
+                        <li>Right-click on bookmarks bar → "Add new bookmark"</li>
+                        <li>Use your browser menu: Bookmarks → Bookmark Manager</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Edit the bookmark:</strong>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Right-click the new bookmark and select "Edit"</li>
+                        <li>In the URL field, paste the copied code (it should start with <code>javascript:</code>)</li>
+                        <li>Name it "Rhythm+ v2 Optimizer"</li>
+                        <li>Save and you're done!</li>
+                    </ul>
+                </li>
+                <li>
+                    Navigate to Rhythm+ v2 and click the bookmark to activate the optimizer!
+                </li>
+            </ol>
+
+            <h3 style="color: #764ba2; margin-top: 25px; margin-bottom: 15px;">Method 3: Browser Console</h3>
+            <ol class="installation-steps">
+                <li>
+                    Open Rhythm+ v2 in your browser
+                </li>
+                <li>
+                    Press <code>F12</code> to open Developer Tools (or right-click → Inspect)
+                </li>
+                <li>
+                    Click on the "Console" tab
+                </li>
+                <li>
+                    Paste the entire code below and press Enter:
+                    <div class="console-method">
+                        <code id="consoleCode"></code>
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-secondary" onclick="copyConsoleCode()">📋 Copy Console Code</button>
+                    </div>
+                </li>
+                <li>
+                    The GUI will appear instantly!
+                </li>
+            </ol>
+
+            <div class="alert alert-success">
+                <strong>✓ Tips:</strong> 
+                <ul style="margin-left: 20px; margin-top: 8px;">
+                    <li>The GUI can be closed and reopened by clicking the bookmark again</li>
+                    <li>Your customization settings persist in browser storage</li>
+                    <li>You can have multiple bookmarklets for different games</li>
+                    <li>Check the Status log to see what operations were applied</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🎛️ Controls & Features</h2>
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr style="background: #f5f5f5;">
+                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #667eea;">Button</th>
+                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #667eea;">Function</th>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                    <td style="padding: 12px;"><strong>🎬 Disable Background Video</strong></td>
+                    <td style="padding: 12px;">Removes all background videos from Rhythm+ v2 for maximum FPS</td>
+                </tr>
+                <tr style="background: #f9f9f9; border-bottom: 1px solid #ddd;">
+                    <td style="padding: 12px;"><strong>Remove Visual Effects</strong></td>
+                    <td style="padding: 12px;">Strips away filters, shadows, and particle effects for cleaner gameplay</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                    <td style="padding: 12px;"><strong>🔓 Unlock All Skins</strong></td>
+                    <td style="padding: 12px;">Instantly unlocks every available skin in the game</td>
+                </tr>
+                <tr style="background: #f9f9f9; border-bottom: 1px solid #ddd;">
+                    <td style="padding: 12px;"><strong>🎨 Skin Color Editor</strong></td>
+                    <td style="padding: 12px;">Opens a color picker to customize individual or all skin colors</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                    <td style="padding: 12px;"><strong>Reset All Settings</strong></td>
+                    <td style="padding: 12px;">Removes all customizations and returns to default state</td>
+                </tr>
+                <tr style="background: #f9f9f9;">
+                    <td style="padding: 12px;"><strong>View Status</strong></td>
+                    <td style="padding: 12px;">Shows a log of recent operations with timestamps</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>❓ FAQ</h2>
+            <div style="margin-top: 20px;">
+                <div style="margin-bottom: 20px;">
+                    <strong style="color: #667eea;">Q: Is this safe to use?</strong>
+                    <p style="margin-top: 8px; color: #555;">A: Yes! This bookmarklet only modifies the visual display in your browser. It doesn't hack the game or access external servers. It's purely client-side.</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <strong style="color: #667eea;">Q: Will it get me banned?</strong>
+                    <p style="margin-top: 8px; color: #555;">A: This is a visual modifier that runs in your browser. Use responsibly and be aware of the game's Terms of Service.</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <strong style="color: #667eea;">Q: Does it work on mobile?</strong>
+                    <p style="margin-top: 8px; color: #555;">A: Bookmarklets work on most mobile browsers, but some browsers may have limitations. Desktop is recommended for full functionality.</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <strong style="color: #667eea;">Q: Can I customize which skins get which colors?</strong>
+                    <p style="margin-top: 8px; color: #555;">A: Yes! Click the "Skin Color Editor" to select specific skins and apply unique colors to them.</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <strong style="color: #667eea;">Q: How do I update the bookmarklet?</strong>
+                    <p style="margin-top: 8px; color: #555;">A: Simply replace the URL/code in your existing bookmark with the latest version from this page.</p>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Made with ⚡ for Rhythm+ v2 Players | All features tested and optimized</p>
+            <p style="font-size: 0.9em; margin-top: 10px;">Remember to enjoy the game responsibly! 🎮</p>
+        </footer>
+    </div>
+
+    <script>
+        function copyCode() {
+            const code = document.getElementById('codeBlock').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert('✓ Bookmarklet code copied to clipboard!');
+            }).catch(() => {
+                // Fallback for old browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = code;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('✓ Bookmarklet code copied to clipboard!');
+            });
+        }
+
+        function copyConsoleCode() {
+            // Load the raw bookmarklet function (without javascript: prefix)
+            const consoleCode = document.getElementById('consoleCode').textContent;
+            navigator.clipboard.writeText(consoleCode).then(() => {
+                alert('✓ Console code copied to clipboard!');
+            }).catch(() => {
+                const textarea = document.createElement('textarea');
+                textarea.value = consoleCode;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('✓ Console code copied to clipboard!');
+            });
+        }
+
+        function createBookmarklet() {
+            const bookmarkletCode = document.getElementById('codeBlock').textContent;
+            const textarea = document.createElement('textarea');
+            textarea.value = bookmarkletCode;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            alert('✓ Bookmarklet code copied!\n\nNow:\n1. Press Ctrl+D to bookmark this page\n2. Right-click the bookmark and edit it\n3. Paste the code into the URL field\n4. Name it "Rhythm+ v2 Optimizer"\n5. Visit Rhythm+ v2 and click the bookmark!');
+        }
+
+        // Populate console code (remove javascript: prefix)
+        const bookmarkCode = document.getElementById('codeBlock').textContent;
+        const consoleCode = bookmarkCode.replace('javascript:', '');
+        document.getElementById('consoleCode').textContent = consoleCode;
+    </script>
+</body>
+</html>
