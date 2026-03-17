@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rhythm+ v2 Store Mod
 // @namespace    rhythm-plus-v2-mod
-// @version      3.4
+// @version      3.9
 // @description  Runtime mod for Rhythm+ v2 using the real Nuxt/Pinia stores.
 // @author       GitHub Copilot
 // @match        https://v2.rhythm-plus.com/*
@@ -33,7 +33,10 @@
   const PANEL_MIN_HEIGHT = 320;
   const PANEL_DEFAULT_WIDTH = 860;
   const PANEL_DEFAULT_HEIGHT = 760;
-  const ALLOWED_UI_THEMES = ['dark', 'light', 'auto', 'midnight-gold', 'sunset'];
+  const ALLOWED_UI_THEMES = ['dark', 'light', 'pastel-blue', 'midnight-gold', 'sunset'];
+  const ALLOWED_SCENE_FILTERS = ['off', 'cosmic-amber', 'mint-matrix', 'silver-static'];
+  const FLASHLIGHT_OVERLAY_ID = MOD_ID + '-flashlight-overlay';
+  const COVER_OVERLAY_ID = MOD_ID + '-cover-overlay';
 
   const DEFAULT_PERF_OPTIONS = {
     lowQualityMode: false,
@@ -75,7 +78,22 @@
     uiHeight: PANEL_DEFAULT_HEIGHT,
     uiTheme: 'dark',
     uiDisableEffects: false,
-    uiDisableAnimations: false
+    uiDisableAnimations: false,
+    sceneFilter: 'off',
+    gameplayRate: 1,
+    preservePitch: true,
+    hitsoundEnabled: false,
+    hitsoundUrl: '',
+    hitsoundVolume: 0.5,
+    flashlightEnabled: false,
+    flashlightSize: 150,
+    flashlightVertical: 50,
+    coverEnabled: false,
+    coverHeight: 35,
+    coverFade: 20,
+    coverRounding: 12,
+    coverColorTop: '#6366f1',
+    coverColorBottom: '#000000'
   };
 
   function loadValue(key, fallback) {
@@ -126,15 +144,32 @@
   if (!mergedPrefs.uiTheme) {
     mergedPrefs.uiTheme = 'dark';
   }
-  if (!ALLOWED_UI_THEMES.includes(mergedPrefs.uiTheme)) {
-    mergedPrefs.uiTheme = 'dark';
-  }
+  mergedPrefs.uiTheme = normalizeUiTheme(mergedPrefs.uiTheme);
   if (typeof mergedPrefs.uiDisableEffects !== 'boolean') {
     mergedPrefs.uiDisableEffects = false;
   }
   if (typeof mergedPrefs.uiDisableAnimations !== 'boolean') {
     mergedPrefs.uiDisableAnimations = false;
   }
+  mergedPrefs.sceneFilter = normalizeSceneFilterValue(mergedPrefs.sceneFilter);
+  mergedPrefs.gameplayRate = normalizeGameplayRate(mergedPrefs.gameplayRate);
+  mergedPrefs.preservePitch = typeof mergedPrefs.preservePitch === 'boolean'
+    ? mergedPrefs.preservePitch
+    : DEFAULT_STATE.preservePitch;
+  mergedPrefs.hitsoundEnabled = !!mergedPrefs.hitsoundEnabled;
+  mergedPrefs.hitsoundUrl = typeof mergedPrefs.hitsoundUrl === 'string'
+    ? mergedPrefs.hitsoundUrl
+    : DEFAULT_STATE.hitsoundUrl;
+  mergedPrefs.hitsoundVolume = clampNumber(mergedPrefs.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume);
+  mergedPrefs.flashlightEnabled = !!mergedPrefs.flashlightEnabled;
+  mergedPrefs.flashlightSize = Math.round(clampNumber(mergedPrefs.flashlightSize, 30, 420, DEFAULT_STATE.flashlightSize));
+  mergedPrefs.flashlightVertical = Math.round(clampNumber(mergedPrefs.flashlightVertical, 10, 90, DEFAULT_STATE.flashlightVertical));
+  mergedPrefs.coverEnabled = !!mergedPrefs.coverEnabled;
+  mergedPrefs.coverHeight = Math.round(clampNumber(mergedPrefs.coverHeight, 5, 90, DEFAULT_STATE.coverHeight));
+  mergedPrefs.coverFade = Math.round(clampNumber(mergedPrefs.coverFade, 0, 90, DEFAULT_STATE.coverFade));
+  mergedPrefs.coverRounding = Math.round(clampNumber(mergedPrefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding));
+  mergedPrefs.coverColorTop = clampColor(mergedPrefs.coverColorTop, DEFAULT_STATE.coverColorTop);
+  mergedPrefs.coverColorBottom = clampColor(mergedPrefs.coverColorBottom, DEFAULT_STATE.coverColorBottom);
   mergedPrefs.uiWidth = clampPanelWidth(mergedPrefs.uiWidth);
   mergedPrefs.uiHeight = clampPanelHeight(mergedPrefs.uiHeight);
 
@@ -152,7 +187,11 @@
     pinnedUserStore: null,
     pinnedConfigStore: null,
     reapplyTimer: null,
-    unlockTimer: null
+    unlockTimer: null,
+    runtimeTimer: null,
+    hitsoundPool: [],
+    hitsoundListenerBound: false,
+    jsonRatePatched: false
   };
 
   function log(message) {
@@ -214,6 +253,43 @@
 
   function clampColor(value, fallback) {
     return isHexColor(value) ? value : fallback;
+  }
+
+  function clampNumber(value, min, max, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.min(max, Math.max(min, parsed));
+  }
+
+  function normalizeGameplayRate(value) {
+    const clamped = clampNumber(value, 0.25, 2, 1);
+    return Math.round(clamped * 20) / 20;
+  }
+
+  function normalizeSceneFilterValue(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    const aliasMap = {
+      sepia: 'cosmic-amber',
+      green: 'mint-matrix',
+      mono: 'silver-static',
+      monochrome: 'silver-static',
+      'solar-dust': 'cosmic-amber',
+      'arcade-mint': 'mint-matrix',
+      silverwire: 'silver-static'
+    };
+
+    const normalized = aliasMap[raw] || raw;
+    return ALLOWED_SCENE_FILTERS.includes(normalized)
+      ? normalized
+      : DEFAULT_STATE.sceneFilter;
+  }
+
+  function normalizeUiTheme(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    const alias = raw === 'auto' ? 'pastel-blue' : raw;
+    return ALLOWED_UI_THEMES.includes(alias) ? alias : DEFAULT_STATE.uiTheme;
   }
 
   function hexToRgb(value) {
@@ -1310,6 +1386,92 @@
     return false;
   }
 
+  function buildGameplayExtrasPayload() {
+    return {
+      type: 'rhythm-plus-extras-code',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      gameplayRate: normalizeGameplayRate(modState.prefs.gameplayRate),
+      preservePitch: !!modState.prefs.preservePitch,
+      hitsoundEnabled: !!modState.prefs.hitsoundEnabled,
+      hitsoundUrl: String(modState.prefs.hitsoundUrl || ''),
+      hitsoundVolume: clampNumber(modState.prefs.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume),
+      flashlightEnabled: !!modState.prefs.flashlightEnabled,
+      flashlightSize: Math.round(clampNumber(modState.prefs.flashlightSize, 30, 420, DEFAULT_STATE.flashlightSize)),
+      flashlightVertical: Math.round(clampNumber(modState.prefs.flashlightVertical, 10, 90, DEFAULT_STATE.flashlightVertical)),
+      coverEnabled: !!modState.prefs.coverEnabled,
+      coverHeight: Math.round(clampNumber(modState.prefs.coverHeight, 5, 90, DEFAULT_STATE.coverHeight)),
+      coverFade: Math.round(clampNumber(modState.prefs.coverFade, 0, 90, DEFAULT_STATE.coverFade)),
+      coverRounding: Math.round(clampNumber(modState.prefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding)),
+      coverColorTop: clampColor(modState.prefs.coverColorTop, DEFAULT_STATE.coverColorTop),
+      coverColorBottom: clampColor(modState.prefs.coverColorBottom, DEFAULT_STATE.coverColorBottom),
+      sceneFilter: normalizeSceneFilterValue(modState.prefs.sceneFilter)
+    };
+  }
+
+  function applyGameplayExtrasPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    modState.prefs.gameplayRate = normalizeGameplayRate(payload.gameplayRate);
+    modState.prefs.preservePitch = !!payload.preservePitch;
+    modState.prefs.hitsoundEnabled = !!payload.hitsoundEnabled;
+    modState.prefs.hitsoundUrl = typeof payload.hitsoundUrl === 'string' ? payload.hitsoundUrl : '';
+    modState.prefs.hitsoundVolume = clampNumber(payload.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume);
+    modState.prefs.flashlightEnabled = !!payload.flashlightEnabled;
+    modState.prefs.flashlightSize = Math.round(clampNumber(payload.flashlightSize, 30, 420, DEFAULT_STATE.flashlightSize));
+    modState.prefs.flashlightVertical = Math.round(clampNumber(payload.flashlightVertical, 10, 90, DEFAULT_STATE.flashlightVertical));
+    modState.prefs.coverEnabled = !!payload.coverEnabled;
+    modState.prefs.coverHeight = Math.round(clampNumber(payload.coverHeight, 5, 90, DEFAULT_STATE.coverHeight));
+    modState.prefs.coverFade = Math.round(clampNumber(payload.coverFade, 0, 90, DEFAULT_STATE.coverFade));
+    modState.prefs.coverRounding = Math.round(clampNumber(payload.coverRounding, 0, 42, DEFAULT_STATE.coverRounding));
+    modState.prefs.coverColorTop = clampColor(payload.coverColorTop, DEFAULT_STATE.coverColorTop);
+    modState.prefs.coverColorBottom = clampColor(payload.coverColorBottom, DEFAULT_STATE.coverColorBottom);
+    modState.prefs.sceneFilter = normalizeSceneFilterValue(payload.sceneFilter);
+
+    persistPrefs();
+    setupHitsoundPool();
+    updateFormFromPrefs();
+    return true;
+  }
+
+  function exportGameplayExtrasCode() {
+    const payload = buildGameplayExtrasPayload();
+    const code = PAGE_WINDOW.btoa(JSON.stringify(payload));
+    PAGE_WINDOW.prompt('Share this Preset String:', code);
+    log('Generated preset string for tempo/obstacle settings.');
+    return true;
+  }
+
+  async function importGameplayExtrasCode() {
+    const raw = PAGE_WINDOW.prompt('Paste Preset String or JSON:');
+    if (!raw) {
+      return false;
+    }
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(PAGE_WINDOW.atob(String(raw).trim()));
+    } catch (error) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch (innerError) {
+        log('Invalid preset string. Import cancelled.');
+        return false;
+      }
+    }
+
+    const applied = applyGameplayExtrasPayload(parsed);
+    if (!applied) {
+      log('Preset payload is invalid. Import cancelled.');
+      return false;
+    }
+
+    log('Imported preset string and applied obstacle/tempo settings.');
+    return true;
+  }
+
   async function exportSelectedSkinCustomColors() {
     const skinId = resolveSelectedSkinId();
     saveUiStateToPreset(skinId);
@@ -1650,7 +1812,7 @@
     style.id = MOD_STYLE_ID;
     style.textContent = [
       '#' + MOD_ID + ' {',
-      '  --rp-bg: radial-gradient(circle at 14% 10%, rgba(59,130,246,0.35) 0%, rgba(59,130,246,0.06) 30%, rgba(59,130,246,0) 52%), linear-gradient(165deg, #050712 0%, #11193a 56%, #101d4a 100%);',
+      '  --rp-bg: radial-gradient(circle at 12% 8%, rgba(56,189,248,0.34) 0%, rgba(56,189,248,0.08) 26%, rgba(56,189,248,0) 52%), radial-gradient(circle at 80% 20%, rgba(168,85,247,0.24) 0%, rgba(168,85,247,0.05) 28%, rgba(168,85,247,0) 56%), linear-gradient(165deg, #040712 0%, #0b1430 42%, #121c48 100%);',
       '  --rp-fg: #f8fafc;',
       '  --rp-border: rgba(203, 213, 225, 0.42);',
       '  --rp-panel-bg: rgba(7, 13, 34, 0.66);',
@@ -1688,24 +1850,25 @@
       '#' + MOD_ID + '::before {',
       '  content: "";',
       '  position: absolute;',
-      '  top: -28%;',
-      '  left: -12%;',
-      '  width: 64%;',
-      '  height: 54%;',
-      '  background: radial-gradient(circle, rgba(56,189,248,0.42), rgba(37,99,235,0));',
-      '  filter: blur(40px);',
-      '  opacity: 0.72;',
+      '  top: -34%;',
+      '  left: -20%;',
+      '  width: 82%;',
+      '  height: 72%;',
+      '  background: radial-gradient(circle at 34% 34%, rgba(56,189,248,0.5), rgba(37,99,235,0));',
+      '  filter: blur(52px);',
+      '  opacity: 0.8;',
       '  pointer-events: none;',
-      '  animation: rpNebulaDriftA 26s ease-in-out infinite alternate;',
+      '  animation: rpNebulaDriftA 34s ease-in-out infinite alternate;',
       '  z-index: 0;',
       '}',
       '#' + MOD_ID + '::after {',
       '  content: "";',
       '  position: absolute;',
       '  inset: 0;',
-      '  background-image: linear-gradient(120deg, rgba(255,255,255,0.08), rgba(255,255,255,0) 40%), linear-gradient(0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.02));',
+      '  background-image: linear-gradient(120deg, rgba(255,255,255,0.08), rgba(255,255,255,0) 40%), radial-gradient(circle at 28% 72%, rgba(56,189,248,0.08), rgba(56,189,248,0));',
+      '  mix-blend-mode: screen;',
       '  pointer-events: none;',
-      '  animation: rpNebulaDriftB 34s ease-in-out infinite alternate;',
+      '  animation: rpNebulaDriftB 40s ease-in-out infinite alternate;',
       '  z-index: 0;',
       '}',
       '#' + MOD_ID + ' > * { position: relative; z-index: 1; }',
@@ -1715,10 +1878,18 @@
       '}',
       '#' + MOD_ID + ' .rp-nebula-field {',
       '  position: absolute;',
-      '  inset: -30%;',
+      '  inset: -36%;',
       '  overflow: hidden;',
       '  pointer-events: none;',
       '  z-index: 0 !important;',
+      '}',
+      '#' + MOD_ID + ' .rp-nebula-cloud {',
+      '  position: absolute;',
+      '  inset: 12% 10% 8% 12%;',
+      '  background: radial-gradient(circle at 24% 30%, rgba(147,197,253,0.28), rgba(147,197,253,0) 52%), radial-gradient(circle at 68% 60%, rgba(192,132,252,0.24), rgba(192,132,252,0) 58%);',
+      '  filter: blur(22px);',
+      '  opacity: 0.76;',
+      '  animation: rpNebulaPulse 8s ease-in-out infinite;',
       '}',
       '#' + MOD_ID + ' .rp-nebula-orb {',
       '  position: absolute;',
@@ -1756,6 +1927,63 @@
       '#' + MOD_ID + '.ui-no-effects .rp-nebula-field {',
       '  display: none;',
       '}',
+      '#' + MOD_ID + '.theme-dark {',
+      '  --rp-bg: #000000;',
+      '  --rp-fg: #f8fafc;',
+      '  --rp-border: rgba(250, 204, 21, 0.34);',
+      '  --rp-panel-bg: rgba(0, 0, 0, 0.9);',
+      '  --rp-input-bg: rgba(3, 3, 3, 0.92);',
+      '  --rp-tab-bg: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));',
+      '  --rp-tab-active: linear-gradient(92deg, #facc15 0%, #f59e0b 58%, #ca8a04 100%);',
+      '  --rp-shadow: 0 30px 62px rgba(0, 0, 0, 0.74);',
+      '  --rp-accent: #facc15;',
+      '  --rp-accent-soft: rgba(250, 204, 21, 0.2);',
+      '  --rp-surface-stroke: rgba(250, 204, 21, 0.16);',
+      '}',
+      '#' + MOD_ID + '.theme-dark::before {',
+      '  background: radial-gradient(circle at 34% 34%, rgba(250,204,21,0.12), rgba(202,138,4,0));',
+      '  opacity: 0.22;',
+      '}',
+      '#' + MOD_ID + '.theme-dark::after {',
+      '  background-image: linear-gradient(120deg, rgba(255,255,255,0.03), rgba(255,255,255,0) 40%), radial-gradient(circle at 72% 64%, rgba(245,158,11,0.04), rgba(245,158,11,0));',
+      '  opacity: 0.18;',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-nebula-cloud {',
+      '  background: radial-gradient(circle at 24% 30%, rgba(250,204,21,0.08), rgba(250,204,21,0) 52%), radial-gradient(circle at 68% 60%, rgba(245,158,11,0.06), rgba(245,158,11,0) 58%);',
+      '  opacity: 0.3;',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-nebula-orb.orb-a {',
+      '  background: radial-gradient(circle at 30% 30%, rgba(250,204,21,0.2), rgba(250,204,21,0));',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-nebula-orb.orb-b {',
+      '  background: radial-gradient(circle at 40% 40%, rgba(245,158,11,0.18), rgba(180,83,9,0));',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-nebula-orb.orb-c {',
+      '  background: radial-gradient(circle at 38% 38%, rgba(254,240,138,0.14), rgba(161,98,7,0));',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-tab-btn.is-active {',
+      '  color: #1a1a1a;',
+      '  border-color: rgba(250,204,21,0.68);',
+      '  box-shadow: 0 8px 18px rgba(250,204,21,0.26);',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-store-mod-button {',
+      '  background: linear-gradient(96deg, #facc15 0%, #f59e0b 58%, #ca8a04 100%);',
+      '  color: #151515;',
+      '  border-color: rgba(254,240,138,0.72);',
+      '  box-shadow: 0 12px 22px rgba(234,179,8,0.28), inset 0 1px 0 rgba(255,255,255,0.36);',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-store-mod-button.alt {',
+      '  background: linear-gradient(96deg, #fde047 0%, #facc15 58%, #eab308 100%);',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-store-mod-button.warn {',
+      '  background: linear-gradient(96deg, #fbbf24 0%, #f59e0b 58%, #d97706 100%);',
+      '}',
+      '#' + MOD_ID + '.theme-dark .rp-store-mod-button.dim {',
+      '  background: linear-gradient(96deg, #080808 0%, #141414 58%, #1d1d1d 100%);',
+      '  color: #facc15;',
+      '  border-color: rgba(250,204,21,0.46);',
+      '  box-shadow: 0 8px 16px rgba(0,0,0,0.48), inset 0 0 0 1px rgba(250,204,21,0.18);',
+      '}',
       '#' + MOD_ID + '.theme-light {',
       '  --rp-bg: radial-gradient(circle at 12% 6%, rgba(6,182,212,0.2) 0%, rgba(6,182,212,0) 42%), linear-gradient(170deg, #fbfdff 0%, #e8eef7 56%, #dde7f4 100%);',
       '  --rp-fg: #0f172a;',
@@ -1769,7 +1997,7 @@
       '  --rp-accent-soft: rgba(13, 148, 136, 0.22);',
       '  --rp-surface-stroke: rgba(100, 116, 139, 0.24);',
       '}',
-      '#' + MOD_ID + '.theme-auto {',
+      '#' + MOD_ID + '.theme-pastel-blue {',
       '  --rp-bg: radial-gradient(circle at 14% 10%, rgba(59,130,246,0.35) 0%, rgba(59,130,246,0.06) 30%, rgba(59,130,246,0) 52%), linear-gradient(165deg, #050712 0%, #11193a 56%, #101d4a 100%);',
       '  --rp-fg: #f8fafc;',
       '  --rp-border: rgba(203, 213, 225, 0.42);',
@@ -1817,11 +2045,18 @@
       '  min-height: 58px !important;',
       '  resize: none;',
       '  border-radius: 999px;',
-      '  border-color: rgba(125, 211, 252, 0.74);',
-      '  background: radial-gradient(circle at 35% 28%, rgba(125,211,252,0.45), rgba(14,116,144,0.22) 48%, rgba(15,23,42,0.9));',
-      '  box-shadow: 0 0 0 1px rgba(125,211,252,0.28), 0 0 24px rgba(56,189,248,0.5), 0 10px 22px rgba(2,8,23,0.55);',
-      '  overflow: visible;',
+      '  border-color: transparent;',
+      '  border-width: 0;',
+      '  background: transparent;',
+      '  box-shadow: none;',
+      '  backdrop-filter: none;',
+      '  overflow: hidden;',
       '  transform: none;',
+      '}',
+      '#' + MOD_ID + '.is-minimized::before,',
+      '#' + MOD_ID + '.is-minimized::after,',
+      '#' + MOD_ID + '.is-minimized .rp-nebula-field {',
+      '  display: none;',
       '}',
       '#' + MOD_ID + '.is-minimized .rp-store-mod-header,',
       '#' + MOD_ID + '.is-minimized .rp-store-mod-shell { display: none; }',
@@ -1830,21 +2065,37 @@
       '  height: 58px;',
       '  display: grid;',
       '  place-items: center;',
-      '  border: 1px solid rgba(191, 219, 254, 0.76);',
+      '  padding: 0;',
+      '  border: 1px solid rgba(248, 250, 252, 0.64);',
       '  border-radius: 999px;',
       '  background: conic-gradient(from 0deg, #22d3ee, #3b82f6, #a855f7, #22d3ee);',
       '  background-size: 180% 180%;',
-      '  color: #f8fafc;',
+      '  color: transparent;',
       '  font-size: 10px;',
       '  font-weight: 900;',
       '  letter-spacing: 0.09em;',
-      '  text-shadow: 0 1px 2px rgba(0,0,0,0.55);',
+      '  text-shadow: none;',
       '  cursor: pointer;',
-      '  box-shadow: inset 0 0 16px rgba(15,23,42,0.65), 0 0 16px rgba(56,189,248,0.52);',
+      '  box-shadow: inset 0 0 16px rgba(15,23,42,0.75);',
       '  animation: rpMiniSpin 6s linear infinite, rpMiniPulse 2.8s ease-in-out infinite;',
       '  transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;',
       '}',
-      '#' + MOD_ID + '.is-minimized .rp-mini-icon:hover { transform: scale(1.08); filter: brightness(1.08); box-shadow: inset 0 0 18px rgba(15,23,42,0.64), 0 0 22px rgba(56,189,248,0.66); }',
+      '#' + MOD_ID + '.is-minimized .rp-mini-icon .rp-mini-glyph {',
+      '  display: inline-block;',
+      '  font-size: 15px;',
+      '  font-weight: 900;',
+      '  letter-spacing: 0.04em;',
+      '  text-transform: uppercase;',
+      '  color: #f8fafc;',
+      '  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55));',
+      '  animation: rpGlyphBreath 2.2s ease-in-out infinite;',
+      '}',
+      '#' + MOD_ID + '.is-minimized .rp-mini-icon:hover { transform: scale(1.08); filter: brightness(1.08); box-shadow: inset 0 0 18px rgba(15,23,42,0.8); }',
+      '#' + MOD_ID + '.ui-no-effects .rp-mini-icon .rp-mini-glyph {',
+      '  background: none;',
+      '  color: #f8fafc;',
+      '  animation: none;',
+      '}',
       '#' + MOD_ID + '.ui-no-effects .rp-store-mod-header { background: transparent; }',
       '#' + MOD_ID + '.ui-no-effects .rp-store-mod-button:hover { filter: none; transform: none; }',
       '#' + MOD_ID + '.ui-no-effects .rp-tab-btn:hover { transform: none; }',
@@ -1901,8 +2152,22 @@
       '  cursor: pointer;',
       '  font-weight: 700;',
       '  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);',
+      '  position: relative;',
+      '  overflow: hidden;',
       '  transition: background 160ms ease, transform 160ms ease, border-color 160ms ease;',
       '}',
+      '#' + MOD_ID + ' .rp-tab-btn::after {',
+      '  content: "";',
+      '  position: absolute;',
+      '  top: 0;',
+      '  left: -50%;',
+      '  width: 34%;',
+      '  height: 100%;',
+      '  transform: skewX(-20deg);',
+      '  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.2), rgba(255,255,255,0));',
+      '  transition: left 250ms ease;',
+      '}',
+      '#' + MOD_ID + ' .rp-tab-btn:hover::after { left: 118%; }',
       '#' + MOD_ID + ' .rp-tab-btn:hover { transform: translateY(-1px); border-color: rgba(255,255,255,0.34); }',
       '#' + MOD_ID + ' .rp-tab-btn.is-active {',
       '  background: var(--rp-tab-active);',
@@ -1913,12 +2178,17 @@
       '  padding: 12px;',
       '  overflow-y: auto;',
       '  min-height: 0;',
+      '  position: relative;',
+      '  transition: filter 220ms ease;',
       '}',
+      '#' + MOD_ID + ' .rp-store-mod-content.is-transitioning { filter: saturate(1.08) brightness(1.02); }',
       '#' + MOD_ID + ' .rp-store-mod-content::-webkit-scrollbar { width: 10px; }',
       '#' + MOD_ID + ' .rp-store-mod-content::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(148,163,184,0.58), rgba(100,116,139,0.48)); border-radius: 999px; }',
       '#' + MOD_ID + ' .rp-store-mod-content::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); }',
-      '#' + MOD_ID + ' .rp-panel { display: none; }',
-      '#' + MOD_ID + ' .rp-panel.is-active { display: block; animation: rpPanelIn 180ms ease; }',
+      '#' + MOD_ID + ' .rp-panel { display: none; opacity: 0; transform: translateY(8px) scale(0.992); transform-origin: 50% 8%; }',
+      '#' + MOD_ID + ' .rp-panel.is-active { display: block; opacity: 1; transform: none; }',
+      '#' + MOD_ID + ' .rp-panel.is-entering { animation: rpPanelFlowIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }',
+      '#' + MOD_ID + ' .rp-panel.is-leaving { display: block; pointer-events: none; animation: rpPanelFlowOut 170ms ease both; }',
       '#' + MOD_ID + ' .rp-store-mod-section { margin-bottom: 14px; border: 1px solid var(--rp-surface-stroke); border-radius: 12px; padding: 10px; background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }',
       '#' + MOD_ID + ' .rp-store-mod-section:last-child { margin-bottom: 0; }',
       '#' + MOD_ID + ' .rp-store-mod-section-title {',
@@ -2063,6 +2333,11 @@
       '#' + MOD_ID + ' .rp-preview-footer { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }',
       '#' + MOD_ID + ' .rp-preview-footer-asset-color { grid-template-columns: 78px 1fr; }',
       '#' + MOD_ID + ' [data-mod="selected-asset-color"] { width: 100%; min-height: 42px; padding: 2px; border-radius: 10px; }',
+      '#' + MOD_ID + ' .rp-rate-inline { display: grid; grid-template-columns: 1fr 92px; gap: 8px; align-items: center; }',
+      '#' + MOD_ID + ' .rp-slider { width: 100%; accent-color: var(--rp-accent); }',
+      '#' + MOD_ID + ' .rp-range-readout { font-size: 11px; opacity: 0.86; }',
+      '#' + MOD_ID + ' .rp-store-mod-color-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }',
+      '#' + MOD_ID + ' .rp-store-mod-color-row input[type="color"] { width: 100%; min-height: 40px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.24); background: var(--rp-input-bg); }',
       '#' + MOD_ID + ' .rp-watermark {',
       '  margin-top: 12px;',
       '  text-align: center;',
@@ -2092,9 +2367,14 @@
       '  animation: none !important;',
       '  transition: none !important;',
       '}',
-      '@keyframes rpPanelIn {',
-      '  from { opacity: 0; transform: translateY(4px); }',
-      '  to { opacity: 1; transform: translateY(0); }',
+      '@keyframes rpPanelFlowIn {',
+      '  0% { opacity: 0; transform: translateY(10px) scale(0.988); filter: blur(1px); }',
+      '  65% { opacity: 1; transform: translateY(-1px) scale(1.004); filter: blur(0); }',
+      '  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }',
+      '}',
+      '@keyframes rpPanelFlowOut {',
+      '  0% { opacity: 1; transform: translateY(0) scale(1); }',
+      '  100% { opacity: 0; transform: translateY(8px) scale(0.992); }',
       '}',
       '@keyframes rpHeaderSweep {',
       '  0% { background-position: 0% 0%; }',
@@ -2124,14 +2404,24 @@
       '  50% { transform: translate3d(16px, -10px, 0) scale(1.06); }',
       '  100% { transform: translate3d(-12px, 8px, 0) scale(1); }',
       '}',
+      '@keyframes rpNebulaPulse {',
+      '  0% { opacity: 0.55; transform: scale(0.98); }',
+      '  50% { opacity: 0.82; transform: scale(1.04); }',
+      '  100% { opacity: 0.55; transform: scale(0.98); }',
+      '}',
       '@keyframes rpMiniPulse {',
-      '  0% { box-shadow: inset 0 0 16px rgba(15,23,42,0.65), 0 0 14px rgba(56,189,248,0.4); }',
-      '  50% { box-shadow: inset 0 0 20px rgba(15,23,42,0.62), 0 0 24px rgba(56,189,248,0.75); }',
-      '  100% { box-shadow: inset 0 0 16px rgba(15,23,42,0.65), 0 0 14px rgba(56,189,248,0.4); }',
+      '  0% { box-shadow: inset 0 0 14px rgba(15,23,42,0.72); }',
+      '  50% { box-shadow: inset 0 0 20px rgba(15,23,42,0.82); }',
+      '  100% { box-shadow: inset 0 0 14px rgba(15,23,42,0.72); }',
       '}',
       '@keyframes rpMiniSpin {',
       '  0% { background-position: 0% 50%; }',
       '  100% { background-position: 220% 50%; }',
+      '}',
+      '@keyframes rpGlyphBreath {',
+      '  0% { transform: scale(1); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55)); }',
+      '  50% { transform: scale(1.08); filter: drop-shadow(0 2px 6px rgba(148,163,184,0.34)); }',
+      '  100% { transform: scale(1); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55)); }',
       '}',
       '@keyframes rpClickPop {',
       '  0% { transform: scale(0.95); }',
@@ -2173,6 +2463,24 @@
       '  animation-duration: 0s !important;',
       '  transition-duration: 0s !important;',
       '}',
+      'body.rplus-filter-cosmic-amber .main-content-bg,',
+      'body.rplus-filter-cosmic-amber canvas,',
+      'body.rplus-filter-cosmic-amber video,',
+      'body.rplus-filter-cosmic-amber .visualizer-container {',
+      '  filter: sepia(0.62) hue-rotate(-10deg) saturate(1.35) contrast(1.08) brightness(0.95) !important;',
+      '}',
+      'body.rplus-filter-mint-matrix .main-content-bg,',
+      'body.rplus-filter-mint-matrix canvas,',
+      'body.rplus-filter-mint-matrix video,',
+      'body.rplus-filter-mint-matrix .visualizer-container {',
+      '  filter: sepia(0.88) hue-rotate(58deg) saturate(2.9) contrast(1.04) brightness(0.86) !important;',
+      '}',
+      'body.rplus-filter-silver-static .main-content-bg,',
+      'body.rplus-filter-silver-static canvas,',
+      'body.rplus-filter-silver-static video,',
+      'body.rplus-filter-silver-static .visualizer-container {',
+      '  filter: grayscale(1) contrast(1.24) brightness(0.94) !important;',
+      '}',
       '@media (max-width: 760px) {',
       '  #' + MOD_ID + ' { width: calc(100vw - 20px); height: calc(100vh - 20px); min-width: 0; min-height: 0; resize: none; top: 10px; right: 10px; left: 10px; }',
       '  #' + MOD_ID + ' .rp-store-mod-shell { grid-template-columns: 1fr; }',
@@ -2192,21 +2500,6 @@
       '    animation: none !important;',
       '    transition: none !important;',
       '  }',
-      '}',
-      '@media (prefers-color-scheme: light) {',
-      '  #' + MOD_ID + '.theme-auto {',
-      '    --rp-bg: radial-gradient(circle at 12% 6%, rgba(6,182,212,0.2) 0%, rgba(6,182,212,0) 42%), linear-gradient(170deg, #fbfdff 0%, #e8eef7 56%, #dde7f4 100%);',
-      '    --rp-fg: #0f172a;',
-      '    --rp-border: rgba(100, 116, 139, 0.44);',
-      '    --rp-panel-bg: rgba(255, 255, 255, 0.74);',
-      '    --rp-input-bg: rgba(255, 255, 255, 0.82);',
-      '    --rp-tab-bg: linear-gradient(180deg, rgba(15,23,42,0.08), rgba(15,23,42,0.02));',
-      '    --rp-tab-active: linear-gradient(90deg, rgba(14,116,144,0.88), rgba(2,132,199,0.66));',
-      '    --rp-shadow: 0 24px 48px rgba(15, 23, 42, 0.22);',
-      '    --rp-accent: #0f766e;',
-      '    --rp-accent-soft: rgba(13, 148, 136, 0.22);',
-      '    --rp-surface-stroke: rgba(100, 116, 139, 0.24);',
-      '  }',
       '}'
     ].join('\n');
     document.head.appendChild(style);
@@ -2218,10 +2511,272 @@
       return;
     }
 
-    root.classList.remove('theme-dark', 'theme-light', 'theme-auto', 'theme-midnight-gold', 'theme-sunset');
-    root.classList.add('theme-' + modState.prefs.uiTheme);
+    const normalizedTheme = normalizeUiTheme(modState.prefs.uiTheme);
+    root.classList.remove('theme-dark', 'theme-light', 'theme-pastel-blue', 'theme-midnight-gold', 'theme-sunset', 'theme-auto');
+    root.classList.add('theme-' + normalizedTheme);
     root.classList.toggle('ui-no-effects', !!modState.prefs.uiDisableEffects);
     root.classList.toggle('ui-no-motion', !!modState.prefs.uiDisableAnimations);
+  }
+
+  function applySceneFilter() {
+    const body = document.body;
+    if (!body) {
+      return;
+    }
+
+    body.classList.remove('rplus-filter-cosmic-amber', 'rplus-filter-mint-matrix', 'rplus-filter-silver-static');
+    const filter = normalizeSceneFilterValue(modState.prefs.sceneFilter);
+
+    if (filter === 'cosmic-amber') {
+      body.classList.add('rplus-filter-cosmic-amber');
+    } else if (filter === 'mint-matrix') {
+      body.classList.add('rplus-filter-mint-matrix');
+    } else if (filter === 'silver-static') {
+      body.classList.add('rplus-filter-silver-static');
+    }
+  }
+
+  function isGameRoute() {
+    return String(PAGE_WINDOW.location.pathname || '').includes('/game/');
+  }
+
+  function getYoutubePlayer() {
+    const frame = document.querySelector('iframe[src*="youtube.com"], iframe[src*="youtube-nocookie.com"]');
+    if (!frame) {
+      return null;
+    }
+
+    if (!frame.id) {
+      frame.id = MOD_ID + '-youtube-frame';
+    }
+
+    if (!PAGE_WINDOW.YT || typeof PAGE_WINDOW.YT.get !== 'function') {
+      return null;
+    }
+
+    try {
+      return PAGE_WINDOW.YT.get(frame.id) || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function applyGameplayRateToMedia() {
+    const rate = normalizeGameplayRate(modState.prefs.gameplayRate);
+    const preservePitch = !!modState.prefs.preservePitch;
+    const player = getYoutubePlayer();
+
+    if (player && typeof player.setPlaybackRate === 'function') {
+      try {
+        player.setPlaybackRate(rate);
+      } catch (error) {
+        // Ignore occasional player readiness races.
+      }
+    }
+
+    const video = document.querySelector('video');
+    if (!video) {
+      return;
+    }
+
+    video.playbackRate = rate;
+    if ('preservesPitch' in video) {
+      video.preservesPitch = preservePitch;
+    }
+    if ('mozPreservesPitch' in video) {
+      video.mozPreservesPitch = preservePitch;
+    }
+    if ('webkitPreservesPitch' in video) {
+      video.webkitPreservesPitch = preservePitch;
+    }
+  }
+
+  function scaleChartTimingPayload(payload, rate) {
+    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.notes)) {
+      return payload;
+    }
+
+    const hasTimingNotes = payload.notes.some((note) => note
+      && typeof note === 'object'
+      && (Number.isFinite(note.t) || Number.isFinite(note.time)));
+    if (!hasTimingNotes) {
+      return payload;
+    }
+
+    payload.notes = payload.notes.map((note) => {
+      if (!note || typeof note !== 'object') {
+        return note;
+      }
+
+      const next = { ...note };
+      if (Number.isFinite(next.t)) next.t /= rate;
+      if (Number.isFinite(next.e)) next.e /= rate;
+      if (Number.isFinite(next.time)) next.time /= rate;
+      if (Number.isFinite(next.endTime)) next.endTime /= rate;
+      return next;
+    });
+
+    if (Array.isArray(payload.timingPoints)) {
+      payload.timingPoints = payload.timingPoints.map((point) => {
+        if (!point || typeof point !== 'object') {
+          return point;
+        }
+
+        const next = { ...point };
+        if (Number.isFinite(next.t)) next.t /= rate;
+        if (Number.isFinite(next.time)) next.time /= rate;
+        return next;
+      });
+    }
+
+    return payload;
+  }
+
+  function installGameplayRatePatch() {
+    if (modState.jsonRatePatched) {
+      return;
+    }
+
+    const nativeParse = PAGE_WINDOW.JSON.parse.bind(PAGE_WINDOW.JSON);
+    PAGE_WINDOW.JSON.parse = function patchedJsonParse(text, reviver) {
+      const parsed = nativeParse(text, reviver);
+      const rate = normalizeGameplayRate(modState.prefs.gameplayRate);
+      if (rate === 1) {
+        return parsed;
+      }
+
+      try {
+        return scaleChartTimingPayload(parsed, rate);
+      } catch (error) {
+        return parsed;
+      }
+    };
+
+    modState.jsonRatePatched = true;
+  }
+
+  function setupHitsoundPool() {
+    modState.hitsoundPool = [];
+
+    const soundUrl = String(modState.prefs.hitsoundUrl || '').trim();
+    if (!modState.prefs.hitsoundEnabled || !soundUrl) {
+      return;
+    }
+
+    const volume = clampNumber(modState.prefs.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume);
+    for (let index = 0; index < 15; index += 1) {
+      const audio = new Audio(soundUrl);
+      audio.preload = 'auto';
+      audio.volume = volume;
+      modState.hitsoundPool.push(audio);
+    }
+  }
+
+  function playHitsound() {
+    if (!modState.prefs.hitsoundEnabled || !isGameRoute()) {
+      return;
+    }
+
+    if (!modState.hitsoundPool.length) {
+      setupHitsoundPool();
+    }
+
+    const audio = modState.hitsoundPool.shift();
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = clampNumber(modState.prefs.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume);
+    audio.currentTime = 0;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {});
+    }
+    modState.hitsoundPool.push(audio);
+  }
+
+  function ensureHitsoundListener() {
+    if (modState.hitsoundListenerBound) {
+      return;
+    }
+
+    PAGE_WINDOW.addEventListener('keydown', (event) => {
+      if (event.repeat) {
+        return;
+      }
+      playHitsound();
+    }, true);
+
+    modState.hitsoundListenerBound = true;
+  }
+
+  function ensureOverlayElement(id, zIndex) {
+    let overlay = document.getElementById(id);
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = id;
+      overlay.style.position = 'fixed';
+      overlay.style.top = '0';
+      overlay.style.left = '50%';
+      overlay.style.transform = 'translateX(-50%)';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.zIndex = String(zIndex);
+      overlay.style.display = 'none';
+      document.body.appendChild(overlay);
+    }
+    return overlay;
+  }
+
+  function updateChallengeOverlays() {
+    const inGame = isGameRoute();
+    const overlayWidth = Math.min(760, Math.max(320, PAGE_WINDOW.innerWidth - 20));
+
+    const flashlight = document.getElementById(FLASHLIGHT_OVERLAY_ID);
+    const cover = document.getElementById(COVER_OVERLAY_ID);
+
+    if (!inGame) {
+      if (flashlight) flashlight.style.display = 'none';
+      if (cover) cover.style.display = 'none';
+      return;
+    }
+
+    if (modState.prefs.flashlightEnabled) {
+      const node = ensureOverlayElement(FLASHLIGHT_OVERLAY_ID, 2147483000);
+      node.style.width = overlayWidth + 'px';
+      node.style.height = '100vh';
+      node.style.display = 'block';
+
+      const size = Math.round(clampNumber(modState.prefs.flashlightSize, 30, 420, DEFAULT_STATE.flashlightSize));
+      const vertical = Math.round(clampNumber(modState.prefs.flashlightVertical, 10, 90, DEFAULT_STATE.flashlightVertical));
+      node.style.background = 'radial-gradient(circle ' + size + 'px at 50% ' + vertical + '%, rgba(0,0,0,0) 0, rgba(0,0,0,0) 72%, rgba(0,0,0,0.96) 100%)';
+    } else if (flashlight) {
+      flashlight.style.display = 'none';
+    }
+
+    if (modState.prefs.coverEnabled) {
+      const node = ensureOverlayElement(COVER_OVERLAY_ID, 2147483001);
+      node.style.width = overlayWidth + 'px';
+      node.style.display = 'block';
+
+      const height = Math.round(clampNumber(modState.prefs.coverHeight, 5, 90, DEFAULT_STATE.coverHeight));
+      const fade = Math.round(clampNumber(modState.prefs.coverFade, 0, 90, DEFAULT_STATE.coverFade));
+      const rounding = Math.round(clampNumber(modState.prefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding));
+      const colorTop = clampColor(modState.prefs.coverColorTop, DEFAULT_STATE.coverColorTop);
+      const colorBottom = clampColor(modState.prefs.coverColorBottom, DEFAULT_STATE.coverColorBottom);
+
+      node.style.height = height + 'vh';
+      node.style.background = 'linear-gradient(to bottom, ' + colorTop + ', ' + colorBottom + ')';
+      node.style.borderRadius = '0 0 ' + rounding + 'px ' + rounding + 'px';
+      node.style.maskImage = 'linear-gradient(to bottom, black ' + Math.max(0, 100 - fade) + '%, transparent 100%)';
+      node.style.webkitMaskImage = 'linear-gradient(to bottom, black ' + Math.max(0, 100 - fade) + '%, transparent 100%)';
+    } else if (cover) {
+      cover.style.display = 'none';
+    }
+  }
+
+  function applyRuntimeExtras() {
+    applyGameplayRateToMedia();
+    updateChallengeOverlays();
   }
 
   function applyFpsSettings(userStore) {
@@ -3153,6 +3708,21 @@
     modState.prefs.skinPresets = {};
     modState.prefs.assetOverrides = {};
     modState.prefs.simplisticSkinMode = false;
+    modState.prefs.sceneFilter = DEFAULT_STATE.sceneFilter;
+    modState.prefs.gameplayRate = DEFAULT_STATE.gameplayRate;
+    modState.prefs.preservePitch = DEFAULT_STATE.preservePitch;
+    modState.prefs.hitsoundEnabled = DEFAULT_STATE.hitsoundEnabled;
+    modState.prefs.hitsoundUrl = DEFAULT_STATE.hitsoundUrl;
+    modState.prefs.hitsoundVolume = DEFAULT_STATE.hitsoundVolume;
+    modState.prefs.flashlightEnabled = DEFAULT_STATE.flashlightEnabled;
+    modState.prefs.flashlightSize = DEFAULT_STATE.flashlightSize;
+    modState.prefs.flashlightVertical = DEFAULT_STATE.flashlightVertical;
+    modState.prefs.coverEnabled = DEFAULT_STATE.coverEnabled;
+    modState.prefs.coverHeight = DEFAULT_STATE.coverHeight;
+    modState.prefs.coverFade = DEFAULT_STATE.coverFade;
+    modState.prefs.coverRounding = DEFAULT_STATE.coverRounding;
+    modState.prefs.coverColorTop = DEFAULT_STATE.coverColorTop;
+    modState.prefs.coverColorBottom = DEFAULT_STATE.coverColorBottom;
 
     modState.selectedAssetIndex = -1;
     modState.tintedPreviewCache.clear();
@@ -3162,6 +3732,9 @@
     syncUiStateToSelectedSkin();
     persistPrefs();
     updateFormFromPrefs();
+    setupHitsoundPool();
+    applySceneFilter();
+    applyRuntimeExtras();
 
     await persistUserStore(userStore);
     log(restoredFromSnapshot
@@ -3187,6 +3760,9 @@
     }
 
     await applySkinColors();
+    setupHitsoundPool();
+    applySceneFilter();
+    applyRuntimeExtras();
     return true;
   }
 
@@ -3217,6 +3793,24 @@
     const uiTheme = root.querySelector('[data-mod="ui-theme"]');
     const uiDisableEffects = root.querySelector('[data-mod="ui-disable-effects"]');
     const uiDisableAnimations = root.querySelector('[data-mod="ui-disable-animations"]');
+    const sceneFilter = root.querySelector('[data-mod="scene-filter"]');
+    const gameplayRate = root.querySelector('[data-mod="gameplay-rate"]');
+    const gameplayRateNumber = root.querySelector('[data-mod="gameplay-rate-number"]');
+    const gameplayRateReadout = root.querySelector('[data-mod="gameplay-rate-value"]');
+    const preservePitchToggle = root.querySelector('[data-mod="preserve-pitch"]');
+    const hitsoundEnabled = root.querySelector('[data-mod="hitsound-enabled"]');
+    const hitsoundUrl = root.querySelector('[data-mod="hitsound-url"]');
+    const hitsoundVolume = root.querySelector('[data-mod="hitsound-volume"]');
+    const hitsoundVolumeValue = root.querySelector('[data-mod="hitsound-volume-value"]');
+    const flashlightEnabled = root.querySelector('[data-mod="flashlight-enabled"]');
+    const flashlightSize = root.querySelector('[data-mod="flashlight-size"]');
+    const flashlightVertical = root.querySelector('[data-mod="flashlight-vertical"]');
+    const coverEnabled = root.querySelector('[data-mod="cover-enabled"]');
+    const coverHeight = root.querySelector('[data-mod="cover-height"]');
+    const coverFade = root.querySelector('[data-mod="cover-fade"]');
+    const coverRounding = root.querySelector('[data-mod="cover-rounding"]');
+    const coverColorTop = root.querySelector('[data-mod="cover-color-top"]');
+    const coverColorBottom = root.querySelector('[data-mod="cover-color-bottom"]');
 
     const perfLowQuality = root.querySelector('[data-mod="perf-low-quality"]');
     const perfAnimations = root.querySelector('[data-mod="perf-disable-animations"]');
@@ -3262,12 +3856,36 @@
       perfFpsLimit.value = Number.isFinite(limit) && limit > 0 ? String(limit) : '';
       perfFpsLimit.disabled = !!modState.prefs.unlockFps;
     }
-    if (uiTheme) uiTheme.value = modState.prefs.uiTheme || 'dark';
+    if (uiTheme) uiTheme.value = normalizeUiTheme(modState.prefs.uiTheme);
     if (uiDisableEffects) uiDisableEffects.checked = !!modState.prefs.uiDisableEffects;
     if (uiDisableAnimations) uiDisableAnimations.checked = !!modState.prefs.uiDisableAnimations;
+    if (sceneFilter) sceneFilter.value = normalizeSceneFilterValue(modState.prefs.sceneFilter);
+
+    const rateValue = normalizeGameplayRate(modState.prefs.gameplayRate);
+    if (gameplayRate) gameplayRate.value = rateValue.toFixed(2);
+    if (gameplayRateNumber) gameplayRateNumber.value = rateValue.toFixed(2);
+    if (gameplayRateReadout) gameplayRateReadout.textContent = rateValue.toFixed(2) + 'x';
+
+    if (preservePitchToggle) preservePitchToggle.checked = !!modState.prefs.preservePitch;
+    if (hitsoundEnabled) hitsoundEnabled.checked = !!modState.prefs.hitsoundEnabled;
+    if (hitsoundUrl) hitsoundUrl.value = modState.prefs.hitsoundUrl || '';
+
+    const volumeValue = clampNumber(modState.prefs.hitsoundVolume, 0, 1, DEFAULT_STATE.hitsoundVolume);
+    if (hitsoundVolume) hitsoundVolume.value = String(volumeValue);
+    if (hitsoundVolumeValue) hitsoundVolumeValue.textContent = Math.round(volumeValue * 100) + '%';
+
+    if (flashlightEnabled) flashlightEnabled.checked = !!modState.prefs.flashlightEnabled;
+    if (flashlightSize) flashlightSize.value = String(Math.round(clampNumber(modState.prefs.flashlightSize, 30, 420, DEFAULT_STATE.flashlightSize)));
+    if (flashlightVertical) flashlightVertical.value = String(Math.round(clampNumber(modState.prefs.flashlightVertical, 10, 90, DEFAULT_STATE.flashlightVertical)));
+    if (coverEnabled) coverEnabled.checked = !!modState.prefs.coverEnabled;
+    if (coverHeight) coverHeight.value = String(Math.round(clampNumber(modState.prefs.coverHeight, 5, 90, DEFAULT_STATE.coverHeight)));
+    if (coverFade) coverFade.value = String(Math.round(clampNumber(modState.prefs.coverFade, 0, 90, DEFAULT_STATE.coverFade)));
+    if (coverRounding) coverRounding.value = String(Math.round(clampNumber(modState.prefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding)));
+    if (coverColorTop) coverColorTop.value = clampColor(modState.prefs.coverColorTop, DEFAULT_STATE.coverColorTop);
+    if (coverColorBottom) coverColorBottom.value = clampColor(modState.prefs.coverColorBottom, DEFAULT_STATE.coverColorBottom);
 
     tabs.forEach((tab) => tab.classList.remove('is-active'));
-    panels.forEach((panel) => panel.classList.remove('is-active'));
+    panels.forEach((panel) => panel.classList.remove('is-active', 'is-entering', 'is-leaving'));
     if (activeTabBtn) activeTabBtn.classList.add('is-active');
     const activePanel = root.querySelector('[data-panel="' + modState.prefs.activeTab + '"]');
     if (activePanel) activePanel.classList.add('is-active');
@@ -3277,6 +3895,8 @@
     }
 
     applyUiAccessibilitySettings();
+    applySceneFilter();
+    applyRuntimeExtras();
     renderSkinPreview();
   }
 
@@ -3347,8 +3967,8 @@
     root.style.height = clampPanelHeight(modState.prefs.uiHeight) + 'px';
 
     root.innerHTML = [
-      '<button class="rp-mini-icon" data-mod="restore" type="button" title="Open Mod">RP</button>',
-      '<div class="rp-nebula-field" aria-hidden="true"><span class="rp-nebula-orb orb-a"></span><span class="rp-nebula-orb orb-b"></span><span class="rp-nebula-orb orb-c"></span></div>',
+      '<button class="rp-mini-icon" data-mod="restore" type="button" title="Open Mod"><span class="rp-mini-glyph">H+</span></button>',
+      '<div class="rp-nebula-field" aria-hidden="true"><span class="rp-nebula-cloud"></span><span class="rp-nebula-orb orb-a"></span><span class="rp-nebula-orb orb-b"></span><span class="rp-nebula-orb orb-c"></span></div>',
       '<div class="rp-store-mod-header" data-mod="drag-handle">',
       '  <div>',
       '    <div class="rp-store-mod-title">Rhythm+ v2 Mod</div>',
@@ -3363,6 +3983,7 @@
       '  <aside class="rp-store-mod-tabs">',
       '    <button class="rp-tab-btn" data-tab="performance" type="button">Performance</button>',
       '    <button class="rp-tab-btn" data-tab="skins" type="button">Skins</button>',
+      '    <button class="rp-tab-btn" data-tab="extras" type="button">Extras</button>',
       '    <button class="rp-tab-btn" data-tab="accessibility" type="button">Accessibility</button>',
       '    <button class="rp-tab-btn" data-tab="tools" type="button">Tools</button>',
       '  </aside>',
@@ -3396,6 +4017,83 @@
       '      <div class="rp-store-mod-note">Tip 1: Toggle Performance Mode on, pick settings, then click Apply Changes.</div>',
       '      <div class="rp-store-mod-note">Tip 2: Check Unlock FPS for uncapped FPS, or uncheck it and set a cap manually.</div>',
       '    </section>',
+      '    <section class="rp-panel" data-panel="extras">',
+      '      <div class="rp-store-mod-section">',
+      '        <div class="rp-store-mod-section-title">Tempo Lab</div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-gameplay-rate">Tempo Warp</label>',
+      '          <div class="rp-rate-inline">',
+      '            <input id="rp-store-mod-gameplay-rate" class="rp-slider" data-mod="gameplay-rate" type="range" min="0.25" max="2" step="0.05">',
+      '            <input class="rp-store-mod-input" data-mod="gameplay-rate-number" type="number" min="0.25" max="2" step="0.05">',
+      '          </div>',
+      '          <div class="rp-range-readout">Current: <strong data-mod="gameplay-rate-value">1.00x</strong></div>',
+      '        </div>',
+      '        <div class="rp-store-mod-grid">',
+      '          <label class="rp-store-mod-checkbox"><input data-mod="preserve-pitch" type="checkbox"> <span>Keep vocal tone when warping tempo</span></label>',
+      '          <label class="rp-store-mod-checkbox"><input data-mod="hitsound-enabled" type="checkbox"> <span>Enable custom key echoes</span></label>',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-hitsound-url">Key Echo URL (mp3/ogg/wav)</label>',
+      '          <input id="rp-store-mod-hitsound-url" class="rp-store-mod-input" data-mod="hitsound-url" type="text" placeholder="https://example.com/hit.mp3">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-hitsound-volume">Key Echo Level</label>',
+      '          <input id="rp-store-mod-hitsound-volume" class="rp-slider" data-mod="hitsound-volume" type="range" min="0" max="1" step="0.05">',
+      '          <div class="rp-range-readout" data-mod="hitsound-volume-value">50%</div>',
+      '        </div>',
+      '      </div>',
+      '      <div class="rp-store-mod-section">',
+      '        <div class="rp-store-mod-section-title">Obstacle Forge</div>',
+      '        <div class="rp-store-mod-grid">',
+      '          <label class="rp-store-mod-checkbox"><input data-mod="flashlight-enabled" type="checkbox"> <span>Tunnel Vision (dark edges)</span></label>',
+      '          <label class="rp-store-mod-checkbox"><input data-mod="cover-enabled" type="checkbox"> <span>Skyline Shroud (top curtain)</span></label>',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-flashlight-size">Tunnel Radius</label>',
+      '          <input id="rp-store-mod-flashlight-size" class="rp-slider" data-mod="flashlight-size" type="range" min="30" max="420" step="1">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-flashlight-vertical">Tunnel Y Anchor</label>',
+      '          <input id="rp-store-mod-flashlight-vertical" class="rp-slider" data-mod="flashlight-vertical" type="range" min="10" max="90" step="1">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-cover-height">Shroud Height</label>',
+      '          <input id="rp-store-mod-cover-height" class="rp-slider" data-mod="cover-height" type="range" min="5" max="90" step="1">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-cover-fade">Shroud Fade</label>',
+      '          <input id="rp-store-mod-cover-fade" class="rp-slider" data-mod="cover-fade" type="range" min="0" max="90" step="1">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-cover-rounding">Shroud Curve</label>',
+      '          <input id="rp-store-mod-cover-rounding" class="rp-slider" data-mod="cover-rounding" type="range" min="0" max="42" step="1">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label">Shroud Colors</label>',
+      '          <div class="rp-store-mod-color-row">',
+      '            <input class="rp-store-mod-input" data-mod="cover-color-top" type="color" title="Cover top color">',
+      '            <input class="rp-store-mod-input" data-mod="cover-color-bottom" type="color" title="Cover bottom color">',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '      <div class="rp-store-mod-section">',
+      '        <div class="rp-store-mod-section-title">Atmosphere + Presets</div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-store-mod-scene-filter">Atmosphere Preset</label>',
+      '          <select id="rp-store-mod-scene-filter" class="rp-store-mod-select" data-mod="scene-filter">',
+      '            <option value="off">None</option>',
+      '            <option value="cosmic-amber">Solar Dust</option>',
+      '            <option value="mint-matrix">Arcade Mint</option>',
+      '            <option value="silver-static">Silverwire</option>',
+      '          </select>',
+      '        </div>',
+      '        <div class="rp-preview-footer">',
+      '          <button class="rp-store-mod-button dim" data-mod="export-extras-code" type="button">Export Preset String</button>',
+      '          <button class="rp-store-mod-button dim" data-mod="import-extras-code" type="button">Import Preset String</button>',
+      '        </div>',
+      '        <div class="rp-store-mod-note">Obstacle overlays only show while you are inside a /game/ room.</div>',
+      '      </div>',
+      '    </section>',
       '    <section class="rp-panel" data-panel="accessibility">',
       '      <div class="rp-store-mod-section">',
       '        <div class="rp-store-mod-section-title">UI Accessibility</div>',
@@ -3404,7 +4102,7 @@
       '          <select id="rp-store-mod-ui-theme" class="rp-store-mod-select" data-mod="ui-theme">',
       '            <option value="dark">Dark</option>',
       '            <option value="light">Light</option>',
-      '            <option value="auto">Auto (System)</option>',
+      '            <option value="pastel-blue">Pastel Blue</option>',
       '            <option value="midnight-gold">Midnight Gold</option>',
       '            <option value="sunset">Sunset Neon</option>',
       '          </select>',
@@ -3501,9 +4199,51 @@
     };
 
     const setActiveTab = (tabId) => {
+      if (!tabId || tabId === modState.prefs.activeTab) {
+        return;
+      }
+
+      const tabs = root.querySelectorAll('[data-tab]');
+      const panels = root.querySelectorAll('.rp-panel');
+      const content = root.querySelector('.rp-store-mod-content');
+      const currentPanel = root.querySelector('[data-panel="' + modState.prefs.activeTab + '"]');
+      const nextPanel = root.querySelector('[data-panel="' + tabId + '"]');
+      if (!nextPanel) {
+        return;
+      }
+
+      tabs.forEach((tab) => {
+        tab.classList.toggle('is-active', tab.getAttribute('data-tab') === tabId);
+      });
+
       modState.prefs.activeTab = tabId;
       persistPrefs();
-      updateFormFromPrefs();
+
+      const motionDisabled = !!modState.prefs.uiDisableAnimations || root.classList.contains('ui-no-motion');
+      if (motionDisabled || !currentPanel || currentPanel === nextPanel) {
+        panels.forEach((panel) => panel.classList.remove('is-active', 'is-entering', 'is-leaving'));
+        nextPanel.classList.add('is-active');
+        return;
+      }
+
+      if (content) {
+        content.classList.add('is-transitioning');
+      }
+
+      currentPanel.classList.remove('is-entering');
+      currentPanel.classList.add('is-leaving');
+
+      PAGE_WINDOW.setTimeout(() => {
+        currentPanel.classList.remove('is-active', 'is-leaving');
+        nextPanel.classList.add('is-active', 'is-entering');
+
+        PAGE_WINDOW.setTimeout(() => {
+          nextPanel.classList.remove('is-entering');
+          if (content) {
+            content.classList.remove('is-transitioning');
+          }
+        }, 260);
+      }, 150);
     };
 
     root.addEventListener('pointerdown', (event) => {
@@ -3597,6 +4337,138 @@
       if (!modState.prefs.lowSpecMode) {
         await applyPerformanceChanges(true);
       }
+    });
+
+    const syncGameplayRateInputs = (rate) => {
+      const safeRate = normalizeGameplayRate(rate);
+      const slider = root.querySelector('[data-mod="gameplay-rate"]');
+      const numberInput = root.querySelector('[data-mod="gameplay-rate-number"]');
+      const readout = root.querySelector('[data-mod="gameplay-rate-value"]');
+      if (slider) slider.value = safeRate.toFixed(2);
+      if (numberInput) numberInput.value = safeRate.toFixed(2);
+      if (readout) readout.textContent = safeRate.toFixed(2) + 'x';
+    };
+
+    const gameplaySlider = root.querySelector('[data-mod="gameplay-rate"]');
+    if (gameplaySlider) {
+      gameplaySlider.addEventListener('input', (event) => {
+        modState.prefs.gameplayRate = normalizeGameplayRate(event.target.value);
+        persistPrefs();
+        syncGameplayRateInputs(modState.prefs.gameplayRate);
+        applyGameplayRateToMedia();
+      });
+    }
+
+    const gameplayNumber = root.querySelector('[data-mod="gameplay-rate-number"]');
+    if (gameplayNumber) {
+      gameplayNumber.addEventListener('change', (event) => {
+        modState.prefs.gameplayRate = normalizeGameplayRate(event.target.value);
+        persistPrefs();
+        syncGameplayRateInputs(modState.prefs.gameplayRate);
+        applyGameplayRateToMedia();
+      });
+    }
+
+    root.querySelector('[data-mod="preserve-pitch"]')?.addEventListener('change', (event) => {
+      modState.prefs.preservePitch = event.target.checked;
+      persistPrefs();
+      applyGameplayRateToMedia();
+    });
+
+    root.querySelector('[data-mod="hitsound-enabled"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitsoundEnabled = event.target.checked;
+      persistPrefs();
+      setupHitsoundPool();
+    });
+
+    root.querySelector('[data-mod="hitsound-url"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitsoundUrl = String(event.target.value || '').trim();
+      persistPrefs();
+      setupHitsoundPool();
+    });
+
+    root.querySelector('[data-mod="hitsound-volume"]')?.addEventListener('input', (event) => {
+      modState.prefs.hitsoundVolume = clampNumber(event.target.value, 0, 1, DEFAULT_STATE.hitsoundVolume);
+      persistPrefs();
+
+      const readout = root.querySelector('[data-mod="hitsound-volume-value"]');
+      if (readout) {
+        readout.textContent = Math.round(modState.prefs.hitsoundVolume * 100) + '%';
+      }
+
+      modState.hitsoundPool.forEach((audio) => {
+        if (audio) {
+          audio.volume = modState.prefs.hitsoundVolume;
+        }
+      });
+    });
+
+    root.querySelector('[data-mod="flashlight-enabled"]')?.addEventListener('change', (event) => {
+      modState.prefs.flashlightEnabled = event.target.checked;
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="flashlight-size"]')?.addEventListener('input', (event) => {
+      modState.prefs.flashlightSize = Math.round(clampNumber(event.target.value, 30, 420, DEFAULT_STATE.flashlightSize));
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="flashlight-vertical"]')?.addEventListener('input', (event) => {
+      modState.prefs.flashlightVertical = Math.round(clampNumber(event.target.value, 10, 90, DEFAULT_STATE.flashlightVertical));
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-enabled"]')?.addEventListener('change', (event) => {
+      modState.prefs.coverEnabled = event.target.checked;
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-height"]')?.addEventListener('input', (event) => {
+      modState.prefs.coverHeight = Math.round(clampNumber(event.target.value, 5, 90, DEFAULT_STATE.coverHeight));
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-fade"]')?.addEventListener('input', (event) => {
+      modState.prefs.coverFade = Math.round(clampNumber(event.target.value, 0, 90, DEFAULT_STATE.coverFade));
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-rounding"]')?.addEventListener('input', (event) => {
+      modState.prefs.coverRounding = Math.round(clampNumber(event.target.value, 0, 42, DEFAULT_STATE.coverRounding));
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-color-top"]')?.addEventListener('input', (event) => {
+      modState.prefs.coverColorTop = clampColor(event.target.value, modState.prefs.coverColorTop);
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="cover-color-bottom"]')?.addEventListener('input', (event) => {
+      modState.prefs.coverColorBottom = clampColor(event.target.value, modState.prefs.coverColorBottom);
+      persistPrefs();
+      updateChallengeOverlays();
+    });
+
+    root.querySelector('[data-mod="scene-filter"]')?.addEventListener('change', (event) => {
+      modState.prefs.sceneFilter = normalizeSceneFilterValue(event.target.value);
+      persistPrefs();
+      applySceneFilter();
+    });
+
+    root.querySelector('[data-mod="export-extras-code"]')?.addEventListener('click', () => {
+      exportGameplayExtrasCode();
+    });
+
+    root.querySelector('[data-mod="import-extras-code"]')?.addEventListener('click', async () => {
+      await importGameplayExtrasCode();
     });
 
     root.querySelector('[data-mod="unlock-skins"]').addEventListener('change', (event) => {
@@ -3757,7 +4629,7 @@
     });
 
     root.querySelector('[data-mod="ui-theme"]').addEventListener('change', (event) => {
-      modState.prefs.uiTheme = ALLOWED_UI_THEMES.includes(event.target.value) ? event.target.value : 'dark';
+      modState.prefs.uiTheme = normalizeUiTheme(event.target.value);
       persistPrefs();
       applyUiAccessibilitySettings();
     });
@@ -4042,10 +4914,21 @@
         applyDomUnlockBypass();
       }, 1200);
     }
+
+    if (!modState.runtimeTimer) {
+      modState.runtimeTimer = PAGE_WINDOW.setInterval(() => {
+        applyRuntimeExtras();
+      }, 160);
+    }
   }
 
   async function boot() {
     ensureStyle();
+    installGameplayRatePatch();
+    ensureHitsoundListener();
+    setupHitsoundPool();
+    applySceneFilter();
+    applyRuntimeExtras();
     createGui();
     startWatchers();
 
