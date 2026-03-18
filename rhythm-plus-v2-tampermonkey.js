@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Rhythm+ v2 Store Mod
-// @namespace    rhythm-plus-v2-mod
+// @name         Hoodie V2 Mod Menu
+// @namespace    rhythm-plus-v2-mods
 // @version      3.9
 // @description  Runtime mod for Rhythm+ v2 using the real Nuxt/Pinia stores.
-// @author       GitHub Copilot
+// @author       HoodieTheGoodie
 // @match        https://v2.rhythm-plus.com/*
 // @match        http://v2.rhythm-plus.com/*
 // @match        https://rhythm-plus.com/*
@@ -37,6 +37,8 @@
   const ALLOWED_SCENE_FILTERS = ['off', 'cosmic-amber', 'mint-matrix', 'silver-static'];
   const FLASHLIGHT_OVERLAY_ID = MOD_ID + '-flashlight-overlay';
   const COVER_OVERLAY_ID = MOD_ID + '-cover-overlay';
+  const HIT_ZONE_OVERLAY_ID = MOD_ID + '-hit-zone-overlay';
+  const PRACTICE_OVERLAY_ID = MOD_ID + '-practice-overlay';
 
   const DEFAULT_PERF_OPTIONS = {
     lowQualityMode: false,
@@ -93,7 +95,22 @@
     coverFade: 20,
     coverRounding: 12,
     coverColorTop: '#6366f1',
-    coverColorBottom: '#000000'
+    coverColorBottom: '#000000',
+    hitZoneGuideEnabled: false,
+    hitZoneUseGameWindows: true,
+    hitZoneAutoSpeed: true,
+    hitZonePerfectPlusMs: 22,
+    hitZonePerfectMs: 45,
+    hitZoneSpeedPps: 780,
+    hitZoneAnchor: 78,
+    hitZoneLaneWidth: 460,
+    hitZoneOverlayOpacity: 0.58,
+    hitZoneCenterLine: true,
+    hitZoneShowLegend: true,
+    practiceModeEnabled: false,
+    practiceBarMaxWidth: 860,
+    practiceBarBottom: 18,
+    practiceBarOpacity: 1
   };
 
   function loadValue(key, fallback) {
@@ -170,6 +187,29 @@
   mergedPrefs.coverRounding = Math.round(clampNumber(mergedPrefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding));
   mergedPrefs.coverColorTop = clampColor(mergedPrefs.coverColorTop, DEFAULT_STATE.coverColorTop);
   mergedPrefs.coverColorBottom = clampColor(mergedPrefs.coverColorBottom, DEFAULT_STATE.coverColorBottom);
+  mergedPrefs.hitZoneGuideEnabled = !!mergedPrefs.hitZoneGuideEnabled;
+  mergedPrefs.hitZoneUseGameWindows = typeof mergedPrefs.hitZoneUseGameWindows === 'boolean'
+    ? mergedPrefs.hitZoneUseGameWindows
+    : DEFAULT_STATE.hitZoneUseGameWindows;
+  mergedPrefs.hitZoneAutoSpeed = typeof mergedPrefs.hitZoneAutoSpeed === 'boolean'
+    ? mergedPrefs.hitZoneAutoSpeed
+    : DEFAULT_STATE.hitZoneAutoSpeed;
+  mergedPrefs.hitZonePerfectPlusMs = Math.round(clampNumber(mergedPrefs.hitZonePerfectPlusMs, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs));
+  mergedPrefs.hitZonePerfectMs = Math.round(clampNumber(mergedPrefs.hitZonePerfectMs, mergedPrefs.hitZonePerfectPlusMs, 160, DEFAULT_STATE.hitZonePerfectMs));
+  mergedPrefs.hitZoneSpeedPps = Math.round(clampNumber(mergedPrefs.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps));
+  mergedPrefs.hitZoneAnchor = Math.round(clampNumber(mergedPrefs.hitZoneAnchor, 35, 96, DEFAULT_STATE.hitZoneAnchor));
+  mergedPrefs.hitZoneLaneWidth = Math.round(clampNumber(mergedPrefs.hitZoneLaneWidth, 220, 980, DEFAULT_STATE.hitZoneLaneWidth));
+  mergedPrefs.hitZoneOverlayOpacity = clampNumber(mergedPrefs.hitZoneOverlayOpacity, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity);
+  mergedPrefs.hitZoneCenterLine = typeof mergedPrefs.hitZoneCenterLine === 'boolean'
+    ? mergedPrefs.hitZoneCenterLine
+    : DEFAULT_STATE.hitZoneCenterLine;
+  mergedPrefs.hitZoneShowLegend = typeof mergedPrefs.hitZoneShowLegend === 'boolean'
+    ? mergedPrefs.hitZoneShowLegend
+    : DEFAULT_STATE.hitZoneShowLegend;
+  mergedPrefs.practiceModeEnabled = !!mergedPrefs.practiceModeEnabled;
+  mergedPrefs.practiceBarMaxWidth = Math.round(clampNumber(mergedPrefs.practiceBarMaxWidth, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth));
+  mergedPrefs.practiceBarBottom = Math.round(clampNumber(mergedPrefs.practiceBarBottom, 0, 240, DEFAULT_STATE.practiceBarBottom));
+  mergedPrefs.practiceBarOpacity = clampNumber(mergedPrefs.practiceBarOpacity, 0.3, 1, DEFAULT_STATE.practiceBarOpacity);
   mergedPrefs.uiWidth = clampPanelWidth(mergedPrefs.uiWidth);
   mergedPrefs.uiHeight = clampPanelHeight(mergedPrefs.uiHeight);
 
@@ -191,7 +231,25 @@
     runtimeTimer: null,
     hitsoundPool: [],
     hitsoundListenerBound: false,
-    jsonRatePatched: false
+    jsonRatePatched: false,
+    hitZoneSpeedEstimatePps: DEFAULT_STATE.hitZoneSpeedPps,
+    hitZoneDetectedPerfectPlusMs: null,
+    hitZoneDetectedPerfectMs: null,
+    hitZoneLastWindowLookup: 0,
+    hitZoneLastSampleTime: 0,
+    hitZoneElementSamples: new WeakMap(),
+    practiceCheckpoints: [],
+    practiceNextCheckpointId: 1,
+    practiceLastKnownTime: 0,
+    practiceLastDuration: 0,
+    practicePendingSeekTime: null,
+    practicePendingSeekExpireAt: 0,
+    practicePendingSeekArmedAt: 0,
+    practiceDragCheckpointId: null,
+    practiceWasInGame: false,
+    practiceHotkeysBound: false,
+    practiceRetryListenerBound: false,
+    hitZoneDetectedAnchorY: null
   };
 
   function log(message) {
@@ -1405,7 +1463,22 @@
       coverRounding: Math.round(clampNumber(modState.prefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding)),
       coverColorTop: clampColor(modState.prefs.coverColorTop, DEFAULT_STATE.coverColorTop),
       coverColorBottom: clampColor(modState.prefs.coverColorBottom, DEFAULT_STATE.coverColorBottom),
-      sceneFilter: normalizeSceneFilterValue(modState.prefs.sceneFilter)
+      sceneFilter: normalizeSceneFilterValue(modState.prefs.sceneFilter),
+      hitZoneGuideEnabled: !!modState.prefs.hitZoneGuideEnabled,
+      hitZoneUseGameWindows: !!modState.prefs.hitZoneUseGameWindows,
+      hitZoneAutoSpeed: !!modState.prefs.hitZoneAutoSpeed,
+      hitZonePerfectPlusMs: Math.round(clampNumber(modState.prefs.hitZonePerfectPlusMs, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs)),
+      hitZonePerfectMs: Math.round(clampNumber(modState.prefs.hitZonePerfectMs, 8, 160, DEFAULT_STATE.hitZonePerfectMs)),
+      hitZoneSpeedPps: Math.round(clampNumber(modState.prefs.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps)),
+      hitZoneAnchor: Math.round(clampNumber(modState.prefs.hitZoneAnchor, 35, 96, DEFAULT_STATE.hitZoneAnchor)),
+      hitZoneLaneWidth: Math.round(clampNumber(modState.prefs.hitZoneLaneWidth, 220, 980, DEFAULT_STATE.hitZoneLaneWidth)),
+      hitZoneOverlayOpacity: clampNumber(modState.prefs.hitZoneOverlayOpacity, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity),
+      hitZoneCenterLine: !!modState.prefs.hitZoneCenterLine,
+      hitZoneShowLegend: !!modState.prefs.hitZoneShowLegend,
+      practiceModeEnabled: !!modState.prefs.practiceModeEnabled,
+      practiceBarMaxWidth: Math.round(clampNumber(modState.prefs.practiceBarMaxWidth, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth)),
+      practiceBarBottom: Math.round(clampNumber(modState.prefs.practiceBarBottom, 0, 240, DEFAULT_STATE.practiceBarBottom)),
+      practiceBarOpacity: clampNumber(modState.prefs.practiceBarOpacity, 0.3, 1, DEFAULT_STATE.practiceBarOpacity)
     };
   }
 
@@ -1429,6 +1502,31 @@
     modState.prefs.coverColorTop = clampColor(payload.coverColorTop, DEFAULT_STATE.coverColorTop);
     modState.prefs.coverColorBottom = clampColor(payload.coverColorBottom, DEFAULT_STATE.coverColorBottom);
     modState.prefs.sceneFilter = normalizeSceneFilterValue(payload.sceneFilter);
+    modState.prefs.hitZoneGuideEnabled = !!payload.hitZoneGuideEnabled;
+    modState.prefs.hitZoneUseGameWindows = typeof payload.hitZoneUseGameWindows === 'boolean'
+      ? payload.hitZoneUseGameWindows
+      : DEFAULT_STATE.hitZoneUseGameWindows;
+    modState.prefs.hitZoneAutoSpeed = typeof payload.hitZoneAutoSpeed === 'boolean'
+      ? payload.hitZoneAutoSpeed
+      : DEFAULT_STATE.hitZoneAutoSpeed;
+    modState.prefs.hitZonePerfectPlusMs = Math.round(clampNumber(payload.hitZonePerfectPlusMs, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs));
+    modState.prefs.hitZonePerfectMs = Math.round(clampNumber(payload.hitZonePerfectMs, modState.prefs.hitZonePerfectPlusMs, 160, DEFAULT_STATE.hitZonePerfectMs));
+    modState.prefs.hitZoneSpeedPps = Math.round(clampNumber(payload.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps));
+    modState.prefs.hitZoneAnchor = Math.round(clampNumber(payload.hitZoneAnchor, 35, 96, DEFAULT_STATE.hitZoneAnchor));
+    modState.prefs.hitZoneLaneWidth = Math.round(clampNumber(payload.hitZoneLaneWidth, 220, 980, DEFAULT_STATE.hitZoneLaneWidth));
+    modState.prefs.hitZoneOverlayOpacity = clampNumber(payload.hitZoneOverlayOpacity, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity);
+    modState.prefs.hitZoneCenterLine = typeof payload.hitZoneCenterLine === 'boolean'
+      ? payload.hitZoneCenterLine
+      : DEFAULT_STATE.hitZoneCenterLine;
+    modState.prefs.hitZoneShowLegend = typeof payload.hitZoneShowLegend === 'boolean'
+      ? payload.hitZoneShowLegend
+      : DEFAULT_STATE.hitZoneShowLegend;
+    modState.prefs.practiceModeEnabled = typeof payload.practiceModeEnabled === 'boolean'
+      ? payload.practiceModeEnabled
+      : DEFAULT_STATE.practiceModeEnabled;
+    modState.prefs.practiceBarMaxWidth = Math.round(clampNumber(payload.practiceBarMaxWidth, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth));
+    modState.prefs.practiceBarBottom = Math.round(clampNumber(payload.practiceBarBottom, 0, 240, DEFAULT_STATE.practiceBarBottom));
+    modState.prefs.practiceBarOpacity = clampNumber(payload.practiceBarOpacity, 0.3, 1, DEFAULT_STATE.practiceBarOpacity);
 
     persistPrefs();
     setupHitsoundPool();
@@ -2336,6 +2434,7 @@
       '#' + MOD_ID + ' .rp-rate-inline { display: grid; grid-template-columns: 1fr 92px; gap: 8px; align-items: center; }',
       '#' + MOD_ID + ' .rp-slider { width: 100%; accent-color: var(--rp-accent); }',
       '#' + MOD_ID + ' .rp-range-readout { font-size: 11px; opacity: 0.86; }',
+      '#' + MOD_ID + ' .rp-hit-zone-readout { font-size: 11px; opacity: 0.9; margin-top: 2px; }',
       '#' + MOD_ID + ' .rp-store-mod-color-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }',
       '#' + MOD_ID + ' .rp-store-mod-color-row input[type="color"] { width: 100%; min-height: 40px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.24); background: var(--rp-input-bg); }',
       '#' + MOD_ID + ' .rp-watermark {',
@@ -2366,6 +2465,186 @@
       '#' + MOD_ID + '.ui-no-motion *::after {',
       '  animation: none !important;',
       '  transition: none !important;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' {',
+      '  position: fixed;',
+      '  left: 50%;',
+      '  top: 0;',
+      '  transform: translateX(-50%);',
+      '  width: 460px;',
+      '  height: 100vh;',
+      '  pointer-events: none;',
+      '  z-index: 2147483002;',
+      '  display: none;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-band {',
+      '  position: absolute;',
+      '  left: 50%;',
+      '  transform: translateX(-50%);',
+      '  width: 100%;',
+      '  border-radius: 8px;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-band-miss {',
+      '  background: linear-gradient(180deg, rgba(239,68,68,0.06), rgba(239,68,68,0.14));',
+      '  border: 1px solid rgba(239,68,68,0.36);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-band-offbeat {',
+      '  background: linear-gradient(180deg, rgba(245,158,11,0.06), rgba(245,158,11,0.18));',
+      '  border: 1px solid rgba(245,158,11,0.4);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-band-perfect {',
+      '  background: linear-gradient(180deg, rgba(56,189,248,0.14), rgba(56,189,248,0.34));',
+      '  border: 1px solid rgba(56,189,248,0.58);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-band-perfect-plus {',
+      '  background: linear-gradient(180deg, rgba(34,197,94,0.2), rgba(34,197,94,0.45));',
+      '  border: 1px solid rgba(34,197,94,0.78);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-boundary {',
+      '  position: absolute;',
+      '  left: 0;',
+      '  width: 100%;',
+      '  height: 2px;',
+      '  pointer-events: none;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-boundary-perfect {',
+      '  background: linear-gradient(90deg, rgba(56,189,248,0), rgba(56,189,248,0.92), rgba(56,189,248,0));',
+      '  box-shadow: 0 0 6px rgba(56,189,248,0.45);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-boundary-plus {',
+      '  background: linear-gradient(90deg, rgba(34,197,94,0), rgba(34,197,94,0.97), rgba(34,197,94,0));',
+      '  box-shadow: 0 0 8px rgba(34,197,94,0.6);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-core {',
+      '  position: absolute;',
+      '  left: 50%;',
+      '  transform: translate(-50%, -50%);',
+      '  width: 100%;',
+      '  height: 3px;',
+      '  background: linear-gradient(90deg, rgba(16,185,129,0), rgba(16,185,129,0.95), rgba(16,185,129,0));',
+      '  box-shadow: 0 0 10px rgba(16,185,129,0.62);',
+      '  pointer-events: none;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-center-line {',
+      '  position: absolute;',
+      '  left: 0;',
+      '  width: 100%;',
+      '  height: 2px;',
+      '  background: linear-gradient(90deg, rgba(251,191,36,0), rgba(251,191,36,0.95), rgba(251,191,36,0));',
+      '  box-shadow: 0 0 8px rgba(251,191,36,0.6);',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-legend {',
+      '  position: absolute;',
+      '  left: 50%;',
+      '  transform: translateX(-50%);',
+      '  font: 11px/1.35 "Trebuchet MS", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif;',
+      '  color: rgba(241,245,249,0.95);',
+      '  background: rgba(2,6,23,0.72);',
+      '  border: 1px solid rgba(148,163,184,0.42);',
+      '  border-radius: 999px;',
+      '  padding: 3px 10px;',
+      '  white-space: nowrap;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-label {',
+      '  position: absolute;',
+      '  font: 10px/1.2 "Trebuchet MS", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif;',
+      '  letter-spacing: 0.04em;',
+      '  text-transform: uppercase;',
+      '  color: rgba(226,232,240,0.88);',
+      '  background: rgba(2,6,23,0.62);',
+      '  border: 1px solid rgba(100,116,139,0.36);',
+      '  border-radius: 999px;',
+      '  padding: 2px 7px;',
+      '}',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-label.early { left: 8px; transform: translateY(-50%); }',
+      '#' + HIT_ZONE_OVERLAY_ID + ' .rp-hit-zone-label.late { right: 8px; transform: translateY(-50%); }',
+      '#' + PRACTICE_OVERLAY_ID + ' {',
+      '  position: fixed;',
+      '  left: 50%;',
+      '  bottom: 18px;',
+      '  transform: translateX(-50%);',
+      '  width: min(860px, calc(100vw - 24px));',
+      '  pointer-events: none;',
+      '  z-index: 2147483001;',
+      '  display: none;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-wrap {',
+      '  pointer-events: auto;',
+      '  border: 1px solid rgba(148,163,184,0.38);',
+      '  border-radius: 12px;',
+      '  background: linear-gradient(180deg, rgba(2,6,23,0.86), rgba(2,6,23,0.65));',
+      '  box-shadow: 0 12px 30px rgba(2,6,23,0.44), inset 0 1px 0 rgba(255,255,255,0.08);',
+      '  padding: 8px 10px 10px;',
+      '  color: rgba(241,245,249,0.96);',
+      '  font: 12px/1.35 "Trebuchet MS", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-header {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  justify-content: space-between;',
+      '  gap: 10px;',
+      '  margin-bottom: 6px;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-title {',
+      '  font-weight: 700;',
+      '  letter-spacing: 0.02em;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-time {',
+      '  opacity: 0.9;',
+      '  font-variant-numeric: tabular-nums;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-bar {',
+      '  position: relative;',
+      '  width: 100%;',
+      '  height: 20px;',
+      '  border-radius: 999px;',
+      '  overflow: hidden;',
+      '  border: 1px solid rgba(148,163,184,0.38);',
+      '  background: linear-gradient(180deg, rgba(30,41,59,0.86), rgba(15,23,42,0.92));',
+      '  cursor: pointer;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-fill {',
+      '  position: absolute;',
+      '  left: 0;',
+      '  top: 0;',
+      '  bottom: 0;',
+      '  width: 0%;',
+      '  border-radius: 999px;',
+      '  background: linear-gradient(90deg, rgba(14,165,233,0.75), rgba(59,130,246,0.86));',
+      '  box-shadow: 0 0 18px rgba(59,130,246,0.32);',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-head {',
+      '  position: absolute;',
+      '  top: -2px;',
+      '  width: 3px;',
+      '  height: calc(100% + 4px);',
+      '  border-radius: 4px;',
+      '  background: rgba(248,250,252,0.96);',
+      '  box-shadow: 0 0 10px rgba(255,255,255,0.5);',
+      '  transform: translateX(-50%);',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-checkpoints {',
+      '  position: absolute;',
+      '  inset: 0;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-marker {',
+      '  position: absolute;',
+      '  top: 50%;',
+      '  width: 12px;',
+      '  height: 12px;',
+      '  border: 1px solid rgba(15,23,42,0.9);',
+      '  border-radius: 50%;',
+      '  background: linear-gradient(180deg, #22c55e, #16a34a);',
+      '  box-shadow: 0 0 0 1px rgba(255,255,255,0.2), 0 4px 10px rgba(22,163,74,0.44);',
+      '  transform: translate(-50%, -50%);',
+      '  cursor: grab;',
+      '  padding: 0;',
+      '}',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-marker:active { cursor: grabbing; }',
+      '#' + PRACTICE_OVERLAY_ID + ' .rp-practice-help {',
+      '  margin-top: 6px;',
+      '  opacity: 0.86;',
+      '  font-size: 11px;',
       '}',
       '@keyframes rpPanelFlowIn {',
       '  0% { opacity: 0; transform: translateY(10px) scale(0.988); filter: blur(1px); }',
@@ -2774,9 +3053,990 @@
     }
   }
 
+  function findTimingWindowValue(target, keyRegex, depth, visited) {
+    if (!target || depth > 6) {
+      return null;
+    }
+
+    if (typeof target === 'number') {
+      return (target > 0 && target <= 220) ? target : null;
+    }
+
+    if (typeof target !== 'object') {
+      return null;
+    }
+
+    if (visited.has(target)) {
+      return null;
+    }
+    visited.add(target);
+
+    if (Array.isArray(target)) {
+      for (let index = 0; index < Math.min(target.length, 60); index += 1) {
+        const hit = findTimingWindowValue(target[index], keyRegex, depth + 1, visited);
+        if (hit !== null) {
+          return hit;
+        }
+      }
+      return null;
+    }
+
+    const entries = Object.entries(target);
+    for (let index = 0; index < Math.min(entries.length, 120); index += 1) {
+      const entry = entries[index];
+      const key = String(entry[0] || '').toLowerCase();
+      const value = entry[1];
+
+      if (keyRegex.test(key) && typeof value === 'number' && value > 0 && value <= 220) {
+        return value;
+      }
+
+      const nested = findTimingWindowValue(value, keyRegex, depth + 1, visited);
+      if (nested !== null) {
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  function detectTimingWindowsFromStores() {
+    const now = Date.now();
+    if (now - modState.hitZoneLastWindowLookup < 2200) {
+      return;
+    }
+    modState.hitZoneLastWindowLookup = now;
+
+    const plusRegex = /(perfect\+|perfectplus|perfect_plus|marvel|marvelous|epic|sick)(?:window|timing|ms)?/i;
+    const perfectRegex = /(^|[^+])perfect(?:window|timing|ms)?|great(?:window|timing|ms)?/i;
+
+    const sources = [getConfigStore(), getUserStore(), PAGE_WINDOW.__NUXT__].filter(Boolean);
+    let plus = null;
+    let perfect = null;
+
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      if (plus === null) {
+        plus = findTimingWindowValue(source, plusRegex, 0, new WeakSet());
+      }
+      if (perfect === null) {
+        perfect = findTimingWindowValue(source, perfectRegex, 0, new WeakSet());
+      }
+    }
+
+    if (plus !== null) {
+      modState.hitZoneDetectedPerfectPlusMs = Math.round(clampNumber(plus, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs));
+    }
+    if (perfect !== null) {
+      modState.hitZoneDetectedPerfectMs = Math.round(clampNumber(perfect, 8, 160, DEFAULT_STATE.hitZonePerfectMs));
+    }
+
+    if (modState.hitZoneDetectedPerfectMs !== null && modState.hitZoneDetectedPerfectPlusMs !== null) {
+      modState.hitZoneDetectedPerfectMs = Math.max(modState.hitZoneDetectedPerfectMs, modState.hitZoneDetectedPerfectPlusMs);
+    }
+  }
+
+  function getResolvedTimingWindowsMs() {
+    let perfectPlusMs = Math.round(clampNumber(modState.prefs.hitZonePerfectPlusMs, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs));
+    let perfectMs = Math.round(clampNumber(modState.prefs.hitZonePerfectMs, perfectPlusMs, 160, DEFAULT_STATE.hitZonePerfectMs));
+
+    if (modState.prefs.hitZoneUseGameWindows) {
+      detectTimingWindowsFromStores();
+      if (modState.hitZoneDetectedPerfectPlusMs !== null) {
+        perfectPlusMs = modState.hitZoneDetectedPerfectPlusMs;
+      }
+      if (modState.hitZoneDetectedPerfectMs !== null) {
+        perfectMs = Math.max(modState.hitZoneDetectedPerfectMs, perfectPlusMs);
+      }
+    }
+
+    return {
+      perfectPlusMs,
+      perfectMs
+    };
+  }
+
+  function sampleHitZoneSpeedPps() {
+    const manual = Math.round(clampNumber(modState.prefs.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps));
+    if (!modState.prefs.hitZoneAutoSpeed || !isGameRoute()) {
+      modState.hitZoneSpeedEstimatePps = manual;
+      return manual;
+    }
+
+    const now = performance.now();
+    const sampleValues = [];
+    const candidates = Array.from(document.querySelectorAll('[class*="note"], [class*="arrow"], [data-note], [data-arrow]')).slice(0, 24);
+
+    candidates.forEach((node) => {
+      if (!(node instanceof Element)) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      if (!rect || rect.height < 8 || rect.height > 220 || rect.width < 8 || rect.width > 220) {
+        return;
+      }
+      if (rect.bottom < 0 || rect.top > PAGE_WINDOW.innerHeight) {
+        return;
+      }
+
+      const previous = modState.hitZoneElementSamples.get(node);
+      modState.hitZoneElementSamples.set(node, { y: rect.top, t: now });
+
+      if (!previous) {
+        return;
+      }
+
+      const dt = now - previous.t;
+      if (dt < 28 || dt > 220) {
+        return;
+      }
+
+      const velocity = Math.abs(rect.top - previous.y) / dt * 1000;
+      if (velocity >= 80 && velocity <= 5000) {
+        sampleValues.push(velocity);
+      }
+    });
+
+    if (sampleValues.length) {
+      const avg = sampleValues.reduce((sum, value) => sum + value, 0) / sampleValues.length;
+      const blended = modState.hitZoneSpeedEstimatePps * 0.78 + avg * 0.22;
+      modState.hitZoneSpeedEstimatePps = Math.round(clampNumber(blended, 120, 2800, manual));
+    } else {
+      modState.hitZoneSpeedEstimatePps = Math.round(clampNumber(modState.hitZoneSpeedEstimatePps, 120, 2800, manual));
+    }
+
+    return modState.hitZoneSpeedEstimatePps;
+  }
+
+  function detectHitZoneCenterY() {
+    if (!isGameRoute()) {
+      modState.hitZoneDetectedAnchorY = null;
+      return null;
+    }
+
+    const viewportWidth = PAGE_WINDOW.innerWidth;
+    const viewportHeight = PAGE_WINDOW.innerHeight;
+    const centerX = viewportWidth / 2;
+    const targetY = viewportHeight * 0.78;
+    const selectors = [
+      '[class*="receptor"]',
+      '[class*="hit-line"]',
+      '[class*="hitline"]',
+      '[class*="strum"]',
+      '[class*="track-hit"]',
+      '[class*="trackhit"]',
+      '[class*="judge-line"]',
+      '[class*="judgment-line"]',
+      '[class*="target-line"]',
+      '[data-hit-line]',
+      '[data-receptor]'
+    ];
+
+    const candidates = Array.from(document.querySelectorAll(selectors.join(', '))).slice(0, 140);
+    let bestScore = -Infinity;
+    let bestY = null;
+
+    candidates.forEach((node) => {
+      if (!(node instanceof Element)) {
+        return;
+      }
+
+      const style = PAGE_WINDOW.getComputedStyle(node);
+      if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) < 0.05) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      if (!rect || rect.width < 60 || rect.width > viewportWidth * 0.95 || rect.height > 180) {
+        return;
+      }
+      if (rect.bottom < 0 || rect.top > viewportHeight || rect.top < viewportHeight * 0.2) {
+        return;
+      }
+
+      const classProbe = String(node.className || '').toLowerCase();
+      const keywordBoost = (/(receptor|hitline|hit-line|track-hit|trackhit|strum|judge|judgment|target-line)/.test(classProbe) ? 220 : 0);
+      const midX = rect.left + rect.width / 2;
+      const midY = rect.top + rect.height / 2;
+      const score = keywordBoost
+        + rect.width * 0.85
+        - Math.abs(midX - centerX) * 0.65
+        - Math.abs(midY - targetY) * 2.2
+        - Math.min(rect.height, 120) * 0.35;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestY = midY;
+      }
+    });
+
+    if (bestY === null) {
+      modState.hitZoneDetectedAnchorY = null;
+      return null;
+    }
+
+    const clampedY = Math.round(clampNumber(bestY, 20, viewportHeight - 20, targetY));
+    modState.hitZoneDetectedAnchorY = clampedY;
+    return clampedY;
+  }
+
+  function ensureHitZoneOverlayElement() {
+    const overlay = ensureOverlayElement(HIT_ZONE_OVERLAY_ID, 2147483002);
+
+    if (!overlay.dataset.ready) {
+      overlay.innerHTML = ''
+        + '<div class="rp-hit-zone-band rp-hit-zone-band-miss" data-hit-zone="miss"></div>'
+        + '<div class="rp-hit-zone-band rp-hit-zone-band-offbeat" data-hit-zone="offbeat"></div>'
+        + '<div class="rp-hit-zone-band rp-hit-zone-band-perfect" data-hit-zone="perfect"></div>'
+        + '<div class="rp-hit-zone-band rp-hit-zone-band-perfect-plus" data-hit-zone="perfect-plus"></div>'
+        + '<div class="rp-hit-zone-boundary rp-hit-zone-boundary-perfect" data-hit-zone="perfect-top"></div>'
+        + '<div class="rp-hit-zone-boundary rp-hit-zone-boundary-perfect" data-hit-zone="perfect-bottom"></div>'
+        + '<div class="rp-hit-zone-boundary rp-hit-zone-boundary-plus" data-hit-zone="perfect-plus-top"></div>'
+        + '<div class="rp-hit-zone-boundary rp-hit-zone-boundary-plus" data-hit-zone="perfect-plus-bottom"></div>'
+        + '<div class="rp-hit-zone-core" data-hit-zone="core"></div>'
+        + '<div class="rp-hit-zone-center-line" data-hit-zone="line"></div>'
+        + '<div class="rp-hit-zone-label early" data-hit-zone="early">Early</div>'
+        + '<div class="rp-hit-zone-label late" data-hit-zone="late">Late</div>'
+        + '<div class="rp-hit-zone-legend" data-hit-zone="legend"></div>';
+      overlay.dataset.ready = '1';
+    }
+
+    return overlay;
+  }
+
+  function updateHitZoneGuideOverlay() {
+    const inGame = isGameRoute();
+    const guideEnabled = !!modState.prefs.hitZoneGuideEnabled;
+    const overlay = document.getElementById(HIT_ZONE_OVERLAY_ID);
+
+    if (!inGame || !guideEnabled) {
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
+      const readoutOff = document.querySelector('[data-mod="hit-zone-readout"]');
+      if (readoutOff) {
+        readoutOff.textContent = guideEnabled
+          ? 'Enter a /game/ room to render hit windows.'
+          : 'Guide disabled';
+      }
+      return;
+    }
+
+    const node = ensureHitZoneOverlayElement();
+    const overlayWidth = Math.round(clampNumber(modState.prefs.hitZoneLaneWidth, 220, 980, DEFAULT_STATE.hitZoneLaneWidth));
+    const opacity = clampNumber(modState.prefs.hitZoneOverlayOpacity, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity);
+    const anchor = Math.round(clampNumber(modState.prefs.hitZoneAnchor, 35, 96, DEFAULT_STATE.hitZoneAnchor));
+
+    const windows = getResolvedTimingWindowsMs();
+    const speedPps = sampleHitZoneSpeedPps();
+    const perfectPlusPx = Math.max(12, Math.round(windows.perfectPlusMs * speedPps / 1000));
+    const perfectPx = Math.max(perfectPlusPx + 10, Math.round(windows.perfectMs * speedPps / 1000));
+    const offbeatMs = Math.round(windows.perfectMs * 1.45);
+    const missMs = Math.round(windows.perfectMs * 2.2);
+    const offbeatPx = Math.max(perfectPx + 8, Math.round(offbeatMs * speedPps / 1000));
+    const missPx = Math.max(offbeatPx + 10, Math.round(missMs * speedPps / 1000));
+    const detectedCenterY = detectHitZoneCenterY();
+    const fallbackCenterY = Math.round(PAGE_WINDOW.innerHeight * (anchor / 100));
+    const centerY = detectedCenterY !== null ? detectedCenterY : fallbackCenterY;
+
+    node.style.display = 'block';
+    node.style.width = overlayWidth + 'px';
+    node.style.opacity = String(opacity);
+
+    const missBand = node.querySelector('[data-hit-zone="miss"]');
+    const offbeatBand = node.querySelector('[data-hit-zone="offbeat"]');
+    const perfectBand = node.querySelector('[data-hit-zone="perfect"]');
+    const perfectPlusBand = node.querySelector('[data-hit-zone="perfect-plus"]');
+    const perfectTop = node.querySelector('[data-hit-zone="perfect-top"]');
+    const perfectBottom = node.querySelector('[data-hit-zone="perfect-bottom"]');
+    const perfectPlusTop = node.querySelector('[data-hit-zone="perfect-plus-top"]');
+    const perfectPlusBottom = node.querySelector('[data-hit-zone="perfect-plus-bottom"]');
+    const core = node.querySelector('[data-hit-zone="core"]');
+    const line = node.querySelector('[data-hit-zone="line"]');
+    const legend = node.querySelector('[data-hit-zone="legend"]');
+    const early = node.querySelector('[data-hit-zone="early"]');
+    const late = node.querySelector('[data-hit-zone="late"]');
+
+    if (missBand) {
+      missBand.style.top = (centerY - missPx) + 'px';
+      missBand.style.height = (missPx * 2) + 'px';
+    }
+    if (offbeatBand) {
+      offbeatBand.style.top = (centerY - offbeatPx) + 'px';
+      offbeatBand.style.height = (offbeatPx * 2) + 'px';
+    }
+    if (perfectBand) {
+      perfectBand.style.top = (centerY - perfectPx) + 'px';
+      perfectBand.style.height = (perfectPx * 2) + 'px';
+    }
+    if (perfectPlusBand) {
+      perfectPlusBand.style.top = (centerY - perfectPlusPx) + 'px';
+      perfectPlusBand.style.height = (perfectPlusPx * 2) + 'px';
+    }
+    if (perfectTop) {
+      perfectTop.style.top = (centerY - perfectPx) + 'px';
+    }
+    if (perfectBottom) {
+      perfectBottom.style.top = (centerY + perfectPx) + 'px';
+    }
+    if (perfectPlusTop) {
+      perfectPlusTop.style.top = (centerY - perfectPlusPx) + 'px';
+    }
+    if (perfectPlusBottom) {
+      perfectPlusBottom.style.top = (centerY + perfectPlusPx) + 'px';
+    }
+    if (core) {
+      core.style.top = centerY + 'px';
+    }
+    if (line) {
+      line.style.top = centerY + 'px';
+      line.style.display = modState.prefs.hitZoneCenterLine ? 'block' : 'none';
+    }
+    if (early) {
+      early.style.top = centerY + 'px';
+      early.style.display = modState.prefs.hitZoneShowLegend ? 'block' : 'none';
+    }
+    if (late) {
+      late.style.top = centerY + 'px';
+      late.style.display = modState.prefs.hitZoneShowLegend ? 'block' : 'none';
+    }
+    if (legend) {
+      legend.style.top = Math.max(10, centerY - missPx - 34) + 'px';
+      legend.style.display = modState.prefs.hitZoneShowLegend ? 'block' : 'none';
+      legend.textContent = 'P+ +/-' + windows.perfectPlusMs + 'ms | P +/-' + windows.perfectMs + 'ms | Offbeat +/-' + offbeatMs + 'ms | Miss +/-' + missMs + 'ms';
+    }
+
+    const readout = document.querySelector('[data-mod="hit-zone-readout"]');
+    if (readout) {
+      const sourceLabel = modState.prefs.hitZoneUseGameWindows
+        ? ((modState.hitZoneDetectedPerfectPlusMs !== null || modState.hitZoneDetectedPerfectMs !== null) ? 'game config' : 'manual fallback')
+        : 'manual';
+      const anchorLabel = detectedCenterY !== null ? 'auto anchor' : ('anchor ' + anchor + '%');
+      readout.textContent = 'P+ +/-' + windows.perfectPlusMs + 'ms | P +/-' + windows.perfectMs + 'ms | ' + speedPps + ' px/s (' + sourceLabel + ', ' + anchorLabel + ')';
+    }
+  }
+
+  function getPracticePlaybackSnapshot() {
+    let time = 0;
+    let duration = 0;
+    let hasMedia = false;
+
+    const video = document.querySelector('video');
+    if (video) {
+      hasMedia = true;
+      if (Number.isFinite(video.currentTime)) {
+        time = video.currentTime;
+      }
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        duration = video.duration;
+      }
+    }
+
+    if (!video) {
+      const audio = document.querySelector('audio');
+      if (audio) {
+        hasMedia = true;
+        if (Number.isFinite(audio.currentTime)) {
+          time = audio.currentTime;
+        }
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          duration = audio.duration;
+        }
+      }
+    }
+
+    if (!hasMedia) {
+      const player = getYoutubePlayer();
+      if (player) {
+        hasMedia = true;
+        if (typeof player.getCurrentTime === 'function') {
+          try {
+            const current = Number(player.getCurrentTime());
+            if (Number.isFinite(current)) {
+              time = current;
+            }
+          } catch (error) {
+            // Ignore player readiness races.
+          }
+        }
+        if (typeof player.getDuration === 'function') {
+          try {
+            const total = Number(player.getDuration());
+            if (Number.isFinite(total) && total > 0) {
+              duration = total;
+            }
+          } catch (error) {
+            // Ignore player readiness races.
+          }
+        }
+      }
+    }
+
+    if (duration > 0) {
+      modState.practiceLastDuration = duration;
+    } else if (modState.practiceLastDuration > 0) {
+      duration = modState.practiceLastDuration;
+    }
+
+    if (Number.isFinite(time) && time >= 0) {
+      modState.practiceLastKnownTime = time;
+    } else {
+      time = modState.practiceLastKnownTime;
+    }
+
+    return {
+      hasMedia,
+      time: Math.max(0, time),
+      duration: Math.max(0, duration)
+    };
+  }
+
+  function seekPracticeMedia(seconds, options) {
+    const target = Math.max(0, Number(seconds) || 0);
+    const safeTransition = !!(options && options.safeTransition);
+    let applied = false;
+
+    const video = document.querySelector('video');
+    if (video && Number.isFinite(video.duration)) {
+      try {
+        const shouldResume = !video.paused;
+        if (safeTransition && shouldResume && typeof video.pause === 'function') {
+          video.pause();
+        }
+        video.currentTime = Math.min(target, Math.max(0, video.duration || target));
+        if (safeTransition && shouldResume && typeof video.play === 'function') {
+          PAGE_WINDOW.setTimeout(() => {
+            const playPromise = video.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+              playPromise.catch(() => {});
+            }
+          }, 120);
+        }
+        applied = true;
+      } catch (error) {
+        // Ignore occasional seek races.
+      }
+    }
+
+    if (!applied) {
+      const audio = document.querySelector('audio');
+      if (audio && Number.isFinite(audio.duration)) {
+        try {
+          const shouldResume = !audio.paused;
+          if (safeTransition && shouldResume && typeof audio.pause === 'function') {
+            audio.pause();
+          }
+          audio.currentTime = Math.min(target, Math.max(0, audio.duration || target));
+          if (safeTransition && shouldResume && typeof audio.play === 'function') {
+            PAGE_WINDOW.setTimeout(() => {
+              const playPromise = audio.play();
+              if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch(() => {});
+              }
+            }, 120);
+          }
+          applied = true;
+        } catch (error) {
+          // Ignore occasional seek races.
+        }
+      }
+    }
+
+    if (!applied) {
+      const player = getYoutubePlayer();
+      if (player && typeof player.seekTo === 'function') {
+        try {
+          if (safeTransition && typeof player.pauseVideo === 'function') {
+            player.pauseVideo();
+          }
+          player.seekTo(target, true);
+          if (safeTransition && typeof player.playVideo === 'function') {
+            PAGE_WINDOW.setTimeout(() => {
+              try {
+                player.playVideo();
+              } catch (error) {
+                // Ignore player readiness races.
+              }
+            }, 120);
+          }
+          applied = true;
+        } catch (error) {
+          // Ignore occasional player readiness races.
+        }
+      }
+    }
+
+    if (applied) {
+      modState.practiceLastKnownTime = target;
+      applyGameplayRateToMedia();
+    }
+
+    return applied;
+  }
+
+  function sanitizePracticeCheckpoints() {
+    if (!Array.isArray(modState.practiceCheckpoints)) {
+      modState.practiceCheckpoints = [];
+      return;
+    }
+
+    const next = [];
+    const seen = new Set();
+    modState.practiceCheckpoints.forEach((point) => {
+      if (!point || typeof point !== 'object') {
+        return;
+      }
+
+      const id = Number(point.id);
+      const time = Number(point.time);
+      if (!Number.isFinite(id) || !Number.isFinite(time) || time < 0) {
+        return;
+      }
+
+      if (seen.has(id)) {
+        return;
+      }
+      seen.add(id);
+      next.push({ id, time });
+    });
+
+    next.sort((left, right) => left.time - right.time);
+    modState.practiceCheckpoints = next;
+
+    const maxId = next.reduce((max, point) => Math.max(max, point.id), 0);
+    modState.practiceNextCheckpointId = Math.max(modState.practiceNextCheckpointId, maxId + 1);
+  }
+
+  function clearPracticeCheckpoints(reason) {
+    if (!modState.practiceCheckpoints.length && modState.practicePendingSeekTime === null) {
+      return;
+    }
+
+    modState.practiceCheckpoints = [];
+    modState.practicePendingSeekTime = null;
+    modState.practicePendingSeekExpireAt = 0;
+    modState.practicePendingSeekArmedAt = 0;
+    modState.practiceDragCheckpointId = null;
+    modState.practiceLastKnownTime = 0;
+    modState.practiceLastDuration = 0;
+    if (reason) {
+      log(reason);
+    }
+  }
+
+  function findClosestCheckpointIndex(atTime) {
+    if (!modState.practiceCheckpoints.length) {
+      return -1;
+    }
+
+    let bestIndex = -1;
+    let bestDelta = Infinity;
+    modState.practiceCheckpoints.forEach((point, index) => {
+      const delta = Math.abs(point.time - atTime);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex;
+  }
+
+  function findPreviousCheckpointTime(atTime) {
+    if (!modState.practiceCheckpoints.length) {
+      return null;
+    }
+
+    let best = null;
+    const epsilon = 0.05;
+    modState.practiceCheckpoints.forEach((point) => {
+      if (point.time <= atTime - epsilon && (best === null || point.time > best)) {
+        best = point.time;
+      }
+    });
+
+    return best;
+  }
+
+  function addPracticeCheckpoint(atTime) {
+    const time = Math.max(0, Number(atTime) || 0);
+    const duration = modState.practiceLastDuration;
+    const clamped = duration > 0 ? Math.min(time, duration) : time;
+    const duplicate = modState.practiceCheckpoints.some((point) => Math.abs(point.time - clamped) <= 0.15);
+    if (duplicate) {
+      return false;
+    }
+
+    modState.practiceCheckpoints.push({
+      id: modState.practiceNextCheckpointId,
+      time: clamped
+    });
+    modState.practiceNextCheckpointId += 1;
+    sanitizePracticeCheckpoints();
+    return true;
+  }
+
+  function removeNearestPracticeCheckpoint(atTime) {
+    const index = findClosestCheckpointIndex(atTime);
+    if (index < 0) {
+      return false;
+    }
+
+    modState.practiceCheckpoints.splice(index, 1);
+    sanitizePracticeCheckpoints();
+    return true;
+  }
+
+  function queuePracticeResumeFromCheckpoint() {
+    const target = findPreviousCheckpointTime(modState.practiceLastKnownTime);
+    if (target === null || target <= 0) {
+      return false;
+    }
+
+    modState.practicePendingSeekTime = target;
+    modState.practicePendingSeekArmedAt = Date.now();
+    modState.practicePendingSeekExpireAt = Date.now() + 15000;
+    return true;
+  }
+
+  function maybeApplyPendingPracticeSeek(snapshot) {
+    if (modState.practicePendingSeekTime === null) {
+      return;
+    }
+
+    if (Date.now() > modState.practicePendingSeekExpireAt) {
+      modState.practicePendingSeekTime = null;
+      modState.practicePendingSeekExpireAt = 0;
+      return;
+    }
+
+    const pending = modState.practicePendingSeekTime;
+    const armedFor = Date.now() - modState.practicePendingSeekArmedAt;
+    const readyForSeek = snapshot.time <= 0.55 && armedFor >= 80;
+    if (!readyForSeek) {
+      return;
+    }
+
+    if (seekPracticeMedia(pending, { safeTransition: true })) {
+      modState.practicePendingSeekTime = null;
+      modState.practicePendingSeekExpireAt = 0;
+      modState.practicePendingSeekArmedAt = 0;
+      log('Practice resume: jumped to checkpoint at ' + pending.toFixed(2) + 's.');
+    }
+  }
+
+  function formatPracticeTime(value) {
+    const total = Math.max(0, Math.floor(Number(value) || 0));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return String(minutes) + ':' + String(seconds).padStart(2, '0');
+  }
+
+  function ensurePracticeOverlayElement() {
+    const overlay = ensureOverlayElement(PRACTICE_OVERLAY_ID, 2147483001);
+    if (!overlay.dataset.ready) {
+      overlay.innerHTML = ''
+        + '<div class="rp-practice-wrap">'
+        + '  <div class="rp-practice-header">'
+        + '    <span class="rp-practice-title" data-practice="status">Practice mode active</span>'
+        + '    <span class="rp-practice-time" data-practice="time">0:00 / 0:00</span>'
+        + '  </div>'
+        + '  <div class="rp-practice-bar" data-practice="bar">'
+        + '    <div class="rp-practice-fill" data-practice="fill"></div>'
+        + '    <div class="rp-practice-head" data-practice="head"></div>'
+        + '    <div class="rp-practice-checkpoints" data-practice="checkpoints"></div>'
+        + '  </div>'
+        + '  <div class="rp-practice-help">Z: add checkpoint | X: remove nearest | Click/drag markers to seek</div>'
+        + '</div>';
+      overlay.dataset.ready = '1';
+
+      const bar = overlay.querySelector('[data-practice="bar"]');
+      const checkpointsLayer = overlay.querySelector('[data-practice="checkpoints"]');
+
+      if (bar) {
+        bar.addEventListener('click', (event) => {
+          if (modState.practiceDragCheckpointId !== null) {
+            return;
+          }
+
+          const rect = bar.getBoundingClientRect();
+          if (!rect || rect.width <= 0) {
+            return;
+          }
+
+          const ratio = clampNumber((event.clientX - rect.left) / rect.width, 0, 1, 0);
+          const duration = modState.practiceLastDuration;
+          if (duration <= 0) {
+            return;
+          }
+
+          const seekTime = duration * ratio;
+          if (seekPracticeMedia(seekTime)) {
+            log('Practice seek: moved to ' + seekTime.toFixed(2) + 's.');
+          }
+        });
+      }
+
+      if (checkpointsLayer) {
+        checkpointsLayer.addEventListener('pointerdown', (event) => {
+          const marker = event.target.closest('[data-practice-checkpoint-id]');
+          if (!marker) {
+            return;
+          }
+
+          const checkpointId = Number(marker.getAttribute('data-practice-checkpoint-id'));
+          if (!Number.isFinite(checkpointId)) {
+            return;
+          }
+
+          modState.practiceDragCheckpointId = checkpointId;
+          if (typeof marker.setPointerCapture === 'function') {
+            marker.setPointerCapture(event.pointerId);
+          }
+          event.preventDefault();
+        });
+
+        checkpointsLayer.addEventListener('dblclick', (event) => {
+          const marker = event.target.closest('[data-practice-checkpoint-id]');
+          if (!marker) {
+            return;
+          }
+
+          const checkpointId = Number(marker.getAttribute('data-practice-checkpoint-id'));
+          const index = modState.practiceCheckpoints.findIndex((point) => point.id === checkpointId);
+          if (index < 0) {
+            return;
+          }
+
+          const removed = modState.practiceCheckpoints[index];
+          modState.practiceCheckpoints.splice(index, 1);
+          sanitizePracticeCheckpoints();
+          log('Removed checkpoint at ' + removed.time.toFixed(2) + 's.');
+          event.preventDefault();
+        });
+      }
+
+      document.addEventListener('pointermove', (event) => {
+        if (modState.practiceDragCheckpointId === null) {
+          return;
+        }
+
+        const currentBar = overlay.querySelector('[data-practice="bar"]');
+        if (!currentBar) {
+          return;
+        }
+
+        const rect = currentBar.getBoundingClientRect();
+        if (!rect || rect.width <= 0) {
+          return;
+        }
+
+        const duration = modState.practiceLastDuration;
+        if (duration <= 0) {
+          return;
+        }
+
+        const ratio = clampNumber((event.clientX - rect.left) / rect.width, 0, 1, 0);
+        const nextTime = duration * ratio;
+        const point = modState.practiceCheckpoints.find((entry) => entry.id === modState.practiceDragCheckpointId);
+        if (!point) {
+          return;
+        }
+
+        point.time = nextTime;
+        sanitizePracticeCheckpoints();
+      });
+
+      document.addEventListener('pointerup', () => {
+        if (modState.practiceDragCheckpointId === null) {
+          return;
+        }
+
+        const point = modState.practiceCheckpoints.find((entry) => entry.id === modState.practiceDragCheckpointId);
+        if (point) {
+          log('Checkpoint moved to ' + point.time.toFixed(2) + 's.');
+        }
+        modState.practiceDragCheckpointId = null;
+      });
+    }
+
+    return overlay;
+  }
+
+  function ensurePracticeHotkeys() {
+    if (modState.practiceHotkeysBound) {
+      return;
+    }
+
+    PAGE_WINDOW.addEventListener('keydown', (event) => {
+      if (!modState.prefs.practiceModeEnabled || !isGameRoute() || event.repeat) {
+        return;
+      }
+
+      const target = event.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const key = String(event.key || '').toLowerCase();
+      const snapshot = getPracticePlaybackSnapshot();
+
+      if (key === 'z') {
+        const created = addPracticeCheckpoint(snapshot.time);
+        if (created) {
+          log('Checkpoint added at ' + snapshot.time.toFixed(2) + 's.');
+        }
+        event.preventDefault();
+      }
+
+      if (key === 'x') {
+        const removed = removeNearestPracticeCheckpoint(snapshot.time);
+        if (removed) {
+          log('Removed nearest checkpoint.');
+        }
+        event.preventDefault();
+      }
+    }, true);
+
+    modState.practiceHotkeysBound = true;
+  }
+
+  function ensurePracticeRetryInterceptor() {
+    if (modState.practiceRetryListenerBound) {
+      return;
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!modState.prefs.practiceModeEnabled || !isGameRoute()) {
+        return;
+      }
+
+      const clickable = event.target && event.target.closest
+        ? event.target.closest('button, [role="button"], a')
+        : null;
+      if (!clickable) {
+        return;
+      }
+
+      const label = String(clickable.textContent || clickable.getAttribute('aria-label') || '').trim().toLowerCase();
+      if (!label) {
+        return;
+      }
+
+      if (!/(restart|retry|try again|play again|replay|start over)/i.test(label)) {
+        return;
+      }
+
+      const queued = queuePracticeResumeFromCheckpoint();
+      if (queued) {
+        log('Practice resume armed. Restarting from closest previous checkpoint.');
+      }
+    }, true);
+
+    modState.practiceRetryListenerBound = true;
+  }
+
+  function updatePracticeModeOverlay() {
+    const overlay = document.getElementById(PRACTICE_OVERLAY_ID);
+    const guiReadout = document.querySelector('[data-mod="practice-readout"]');
+    const inGame = isGameRoute();
+    const enabled = !!modState.prefs.practiceModeEnabled;
+
+    if (modState.practiceWasInGame && !inGame) {
+      clearPracticeCheckpoints('Left game route. Practice checkpoints cleared.');
+    }
+    modState.practiceWasInGame = inGame;
+
+    if (!enabled || !inGame) {
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
+      if (guiReadout) {
+        guiReadout.textContent = enabled
+          ? 'Practice mode enabled. Enter a /game/ room.'
+          : 'Practice mode disabled';
+      }
+      return;
+    }
+
+    ensurePracticeHotkeys();
+    ensurePracticeRetryInterceptor();
+    sanitizePracticeCheckpoints();
+    const snapshot = getPracticePlaybackSnapshot();
+    const mediaReady = snapshot.hasMedia && (snapshot.duration > 0 || snapshot.time > 0.05);
+    if (!mediaReady) {
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
+      if (guiReadout) {
+        guiReadout.textContent = 'Practice mode waiting for song media to load...';
+      }
+      return;
+    }
+
+    const node = ensurePracticeOverlayElement();
+    maybeApplyPendingPracticeSeek(snapshot);
+
+    const duration = snapshot.duration;
+    const safeDuration = duration > 0 ? duration : 0;
+    const clampedTime = safeDuration > 0
+      ? Math.min(snapshot.time, safeDuration)
+      : snapshot.time;
+    const progress = safeDuration > 0
+      ? clampNumber(clampedTime / safeDuration, 0, 1, 0)
+      : 0;
+
+    node.style.display = 'block';
+  node.style.width = 'min(' + Math.round(clampNumber(modState.prefs.practiceBarMaxWidth, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth)) + 'px, calc(100vw - 24px))';
+  node.style.bottom = Math.round(clampNumber(modState.prefs.practiceBarBottom, 0, 240, DEFAULT_STATE.practiceBarBottom)) + 'px';
+  node.style.opacity = String(clampNumber(modState.prefs.practiceBarOpacity, 0.3, 1, DEFAULT_STATE.practiceBarOpacity));
+
+    const status = node.querySelector('[data-practice="status"]');
+    const timeReadout = node.querySelector('[data-practice="time"]');
+    const fill = node.querySelector('[data-practice="fill"]');
+    const head = node.querySelector('[data-practice="head"]');
+    const checkpointsLayer = node.querySelector('[data-practice="checkpoints"]');
+
+    if (status) {
+      status.textContent = modState.practiceCheckpoints.length
+        ? ('Practice checkpoints: ' + modState.practiceCheckpoints.length)
+        : 'Practice mode active';
+    }
+    if (timeReadout) {
+      timeReadout.textContent = formatPracticeTime(clampedTime) + ' / ' + formatPracticeTime(safeDuration);
+    }
+    if (fill) {
+      fill.style.width = (progress * 100).toFixed(3) + '%';
+    }
+    if (head) {
+      head.style.left = (progress * 100).toFixed(3) + '%';
+    }
+
+    if (checkpointsLayer) {
+      const markerHtml = modState.practiceCheckpoints.map((point) => {
+        const left = safeDuration > 0
+          ? clampNumber((point.time / safeDuration) * 100, 0, 100, 0)
+          : 0;
+        const title = 'Checkpoint ' + formatPracticeTime(point.time) + ' (double click to delete)';
+        return '<button class="rp-practice-marker" data-practice-checkpoint-id="' + point.id + '" style="left:' + left.toFixed(3) + '%" title="' + title.replace(/"/g, '&quot;') + '"></button>';
+      }).join('');
+      checkpointsLayer.innerHTML = markerHtml;
+    }
+
+    if (guiReadout) {
+      const count = modState.practiceCheckpoints.length;
+      guiReadout.textContent = count > 0
+        ? ('Active checkpoints: ' + count + ' | Song ' + formatPracticeTime(clampedTime) + ' / ' + formatPracticeTime(safeDuration))
+        : 'No checkpoints yet. Press Z in-game to add one.';
+    }
+  }
+
   function applyRuntimeExtras() {
     applyGameplayRateToMedia();
     updateChallengeOverlays();
+    updateHitZoneGuideOverlay();
+    updatePracticeModeOverlay();
   }
 
   function applyFpsSettings(userStore) {
@@ -3723,6 +4983,37 @@
     modState.prefs.coverRounding = DEFAULT_STATE.coverRounding;
     modState.prefs.coverColorTop = DEFAULT_STATE.coverColorTop;
     modState.prefs.coverColorBottom = DEFAULT_STATE.coverColorBottom;
+    modState.prefs.hitZoneGuideEnabled = DEFAULT_STATE.hitZoneGuideEnabled;
+    modState.prefs.hitZoneUseGameWindows = DEFAULT_STATE.hitZoneUseGameWindows;
+    modState.prefs.hitZoneAutoSpeed = DEFAULT_STATE.hitZoneAutoSpeed;
+    modState.prefs.hitZonePerfectPlusMs = DEFAULT_STATE.hitZonePerfectPlusMs;
+    modState.prefs.hitZonePerfectMs = DEFAULT_STATE.hitZonePerfectMs;
+    modState.prefs.hitZoneSpeedPps = DEFAULT_STATE.hitZoneSpeedPps;
+    modState.prefs.hitZoneAnchor = DEFAULT_STATE.hitZoneAnchor;
+    modState.prefs.hitZoneLaneWidth = DEFAULT_STATE.hitZoneLaneWidth;
+    modState.prefs.hitZoneOverlayOpacity = DEFAULT_STATE.hitZoneOverlayOpacity;
+    modState.prefs.hitZoneCenterLine = DEFAULT_STATE.hitZoneCenterLine;
+    modState.prefs.hitZoneShowLegend = DEFAULT_STATE.hitZoneShowLegend;
+    modState.prefs.practiceModeEnabled = DEFAULT_STATE.practiceModeEnabled;
+    modState.prefs.practiceBarMaxWidth = DEFAULT_STATE.practiceBarMaxWidth;
+    modState.prefs.practiceBarBottom = DEFAULT_STATE.practiceBarBottom;
+    modState.prefs.practiceBarOpacity = DEFAULT_STATE.practiceBarOpacity;
+
+    modState.hitZoneDetectedPerfectPlusMs = null;
+    modState.hitZoneDetectedPerfectMs = null;
+    modState.hitZoneSpeedEstimatePps = DEFAULT_STATE.hitZoneSpeedPps;
+    modState.hitZoneElementSamples = new WeakMap();
+    modState.hitZoneDetectedAnchorY = null;
+
+    modState.practiceCheckpoints = [];
+    modState.practiceNextCheckpointId = 1;
+    modState.practiceLastKnownTime = 0;
+    modState.practiceLastDuration = 0;
+    modState.practicePendingSeekTime = null;
+    modState.practicePendingSeekExpireAt = 0;
+    modState.practicePendingSeekArmedAt = 0;
+    modState.practiceDragCheckpointId = null;
+    modState.practiceWasInGame = false;
 
     modState.selectedAssetIndex = -1;
     modState.tintedPreviewCache.clear();
@@ -3811,6 +5102,23 @@
     const coverRounding = root.querySelector('[data-mod="cover-rounding"]');
     const coverColorTop = root.querySelector('[data-mod="cover-color-top"]');
     const coverColorBottom = root.querySelector('[data-mod="cover-color-bottom"]');
+    const hitZoneGuideEnabled = root.querySelector('[data-mod="hit-zone-guide-enabled"]');
+    const hitZoneUseGameWindows = root.querySelector('[data-mod="hit-zone-use-game-windows"]');
+    const hitZoneAutoSpeed = root.querySelector('[data-mod="hit-zone-auto-speed"]');
+    const hitZonePerfectPlus = root.querySelector('[data-mod="hit-zone-perfect-plus-ms"]');
+    const hitZonePerfect = root.querySelector('[data-mod="hit-zone-perfect-ms"]');
+    const hitZoneSpeed = root.querySelector('[data-mod="hit-zone-speed-pps"]');
+    const hitZoneAnchor = root.querySelector('[data-mod="hit-zone-anchor"]');
+    const hitZoneLaneWidth = root.querySelector('[data-mod="hit-zone-lane-width"]');
+    const hitZoneOpacity = root.querySelector('[data-mod="hit-zone-opacity"]');
+    const hitZoneCenterLine = root.querySelector('[data-mod="hit-zone-center-line"]');
+    const hitZoneShowLegend = root.querySelector('[data-mod="hit-zone-show-legend"]');
+    const hitZoneReadout = root.querySelector('[data-mod="hit-zone-readout"]');
+    const practiceModeEnabled = root.querySelector('[data-mod="practice-mode-enabled"]');
+    const practiceBarMaxWidth = root.querySelector('[data-mod="practice-bar-max-width"]');
+    const practiceBarBottom = root.querySelector('[data-mod="practice-bar-bottom"]');
+    const practiceBarOpacity = root.querySelector('[data-mod="practice-bar-opacity"]');
+    const practiceReadout = root.querySelector('[data-mod="practice-readout"]');
 
     const perfLowQuality = root.querySelector('[data-mod="perf-low-quality"]');
     const perfAnimations = root.querySelector('[data-mod="perf-disable-animations"]');
@@ -3883,6 +5191,31 @@
     if (coverRounding) coverRounding.value = String(Math.round(clampNumber(modState.prefs.coverRounding, 0, 42, DEFAULT_STATE.coverRounding)));
     if (coverColorTop) coverColorTop.value = clampColor(modState.prefs.coverColorTop, DEFAULT_STATE.coverColorTop);
     if (coverColorBottom) coverColorBottom.value = clampColor(modState.prefs.coverColorBottom, DEFAULT_STATE.coverColorBottom);
+    if (hitZoneGuideEnabled) hitZoneGuideEnabled.checked = !!modState.prefs.hitZoneGuideEnabled;
+    if (hitZoneUseGameWindows) hitZoneUseGameWindows.checked = !!modState.prefs.hitZoneUseGameWindows;
+    if (hitZoneAutoSpeed) hitZoneAutoSpeed.checked = !!modState.prefs.hitZoneAutoSpeed;
+    if (hitZonePerfectPlus) hitZonePerfectPlus.value = String(Math.round(clampNumber(modState.prefs.hitZonePerfectPlusMs, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs)));
+    if (hitZonePerfect) hitZonePerfect.value = String(Math.round(clampNumber(modState.prefs.hitZonePerfectMs, 8, 160, DEFAULT_STATE.hitZonePerfectMs)));
+    if (hitZoneSpeed) hitZoneSpeed.value = String(Math.round(clampNumber(modState.prefs.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps)));
+    if (hitZoneAnchor) hitZoneAnchor.value = String(Math.round(clampNumber(modState.prefs.hitZoneAnchor, 35, 96, DEFAULT_STATE.hitZoneAnchor)));
+    if (hitZoneLaneWidth) hitZoneLaneWidth.value = String(Math.round(clampNumber(modState.prefs.hitZoneLaneWidth, 220, 980, DEFAULT_STATE.hitZoneLaneWidth)));
+    if (hitZoneOpacity) hitZoneOpacity.value = String(clampNumber(modState.prefs.hitZoneOverlayOpacity, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity));
+    if (hitZoneCenterLine) hitZoneCenterLine.checked = !!modState.prefs.hitZoneCenterLine;
+    if (hitZoneShowLegend) hitZoneShowLegend.checked = !!modState.prefs.hitZoneShowLegend;
+    if (hitZoneReadout) {
+      hitZoneReadout.textContent = modState.prefs.hitZoneGuideEnabled
+        ? 'Guide active. Enter a /game/ room to see live zones.'
+        : 'Guide disabled';
+    }
+    if (practiceModeEnabled) practiceModeEnabled.checked = !!modState.prefs.practiceModeEnabled;
+    if (practiceBarMaxWidth) practiceBarMaxWidth.value = String(Math.round(clampNumber(modState.prefs.practiceBarMaxWidth, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth)));
+    if (practiceBarBottom) practiceBarBottom.value = String(Math.round(clampNumber(modState.prefs.practiceBarBottom, 0, 240, DEFAULT_STATE.practiceBarBottom)));
+    if (practiceBarOpacity) practiceBarOpacity.value = String(clampNumber(modState.prefs.practiceBarOpacity, 0.3, 1, DEFAULT_STATE.practiceBarOpacity));
+    if (practiceReadout) {
+      practiceReadout.textContent = modState.prefs.practiceModeEnabled
+        ? 'Practice mode ready. Overlay appears when song media is loaded.'
+        : 'Practice mode disabled';
+    }
 
     tabs.forEach((tab) => tab.classList.remove('is-active'));
     panels.forEach((panel) => panel.classList.remove('is-active', 'is-entering', 'is-leaving'));
@@ -4075,6 +5408,62 @@
       '            <input class="rp-store-mod-input" data-mod="cover-color-bottom" type="color" title="Cover bottom color">',
       '          </div>',
       '        </div>',
+      '      </div>',
+        '      <div class="rp-store-mod-section">',
+        '        <div class="rp-store-mod-section-title">Hit Window Guide (QoL)</div>',
+        '        <div class="rp-store-mod-grid">',
+        '          <label class="rp-store-mod-checkbox"><input data-mod="hit-zone-guide-enabled" type="checkbox"> <span>Show Perfect+/Perfect hit zones</span></label>',
+        '          <label class="rp-store-mod-checkbox"><input data-mod="hit-zone-use-game-windows" type="checkbox"> <span>Use game timing windows when detected</span></label>',
+        '          <label class="rp-store-mod-checkbox"><input data-mod="hit-zone-auto-speed" type="checkbox"> <span>Auto-detect note travel speed</span></label>',
+        '          <label class="rp-store-mod-checkbox"><input data-mod="hit-zone-center-line" type="checkbox"> <span>Show judgment center line</span></label>',
+        '          <label class="rp-store-mod-checkbox"><input data-mod="hit-zone-show-legend" type="checkbox"> <span>Show Early/Late labels + legend</span></label>',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-perfect-plus">Perfect+ Window (ms)</label>',
+        '          <input id="rp-hit-zone-perfect-plus" class="rp-store-mod-input" data-mod="hit-zone-perfect-plus-ms" type="number" min="5" max="90" step="1">',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-perfect">Perfect Window (ms)</label>',
+        '          <input id="rp-hit-zone-perfect" class="rp-store-mod-input" data-mod="hit-zone-perfect-ms" type="number" min="8" max="160" step="1">',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-speed">Lane Speed (px/s)</label>',
+        '          <input id="rp-hit-zone-speed" class="rp-store-mod-input" data-mod="hit-zone-speed-pps" type="number" min="120" max="2800" step="10">',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-anchor">Judgment Line Y (%)</label>',
+        '          <input id="rp-hit-zone-anchor" class="rp-slider" data-mod="hit-zone-anchor" type="range" min="35" max="96" step="1">',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-width">Guide Width (px)</label>',
+        '          <input id="rp-hit-zone-width" class="rp-slider" data-mod="hit-zone-lane-width" type="range" min="220" max="980" step="10">',
+        '        </div>',
+        '        <div class="rp-store-mod-field">',
+        '          <label class="rp-store-mod-label" for="rp-hit-zone-opacity">Guide Opacity</label>',
+        '          <input id="rp-hit-zone-opacity" class="rp-slider" data-mod="hit-zone-opacity" type="range" min="0.15" max="1" step="0.05">',
+        '          <div class="rp-hit-zone-readout" data-mod="hit-zone-readout">Guide disabled</div>',
+        '        </div>',
+        '        <div class="rp-store-mod-note">This helps with consistent P+/P timing by drawing live timing bands over the lane in /game/.</div>',
+        '      </div>',
+      '      <div class="rp-store-mod-section">',
+      '        <div class="rp-store-mod-section-title">Practice Mode (Checkpoints)</div>',
+      '        <div class="rp-store-mod-grid">',
+      '          <label class="rp-store-mod-checkbox"><input data-mod="practice-mode-enabled" type="checkbox"> <span>Enable checkpoint practice mode</span></label>',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-practice-max-width">Timeline Max Width (px)</label>',
+      '          <input id="rp-practice-max-width" class="rp-slider" data-mod="practice-bar-max-width" type="range" min="360" max="1400" step="10">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-practice-bottom">Timeline Bottom Offset (px)</label>',
+      '          <input id="rp-practice-bottom" class="rp-slider" data-mod="practice-bar-bottom" type="range" min="0" max="240" step="2">',
+      '        </div>',
+      '        <div class="rp-store-mod-field">',
+      '          <label class="rp-store-mod-label" for="rp-practice-opacity">Timeline Opacity</label>',
+      '          <input id="rp-practice-opacity" class="rp-slider" data-mod="practice-bar-opacity" type="range" min="0.3" max="1" step="0.05">',
+      '        </div>',
+      '        <div class="rp-hit-zone-readout" data-mod="practice-readout">Practice mode disabled</div>',
+      '        <div class="rp-store-mod-note">Overlay appears only after song media loads. Hotkeys: Z add checkpoint, X remove nearest. Drag markers to move checkpoints.</div>',
       '      </div>',
       '      <div class="rp-store-mod-section">',
       '        <div class="rp-store-mod-section-title">Atmosphere + Presets</div>',
@@ -4455,6 +5844,108 @@
       modState.prefs.coverColorBottom = clampColor(event.target.value, modState.prefs.coverColorBottom);
       persistPrefs();
       updateChallengeOverlays();
+    });
+
+    const refreshHitZoneRuntime = () => {
+      modState.hitZoneDetectedPerfectPlusMs = null;
+      modState.hitZoneDetectedPerfectMs = null;
+      modState.hitZoneDetectedAnchorY = null;
+      modState.hitZoneLastWindowLookup = 0;
+      if (!modState.prefs.hitZoneAutoSpeed) {
+        modState.hitZoneSpeedEstimatePps = Math.round(clampNumber(modState.prefs.hitZoneSpeedPps, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps));
+      }
+      persistPrefs();
+      updateHitZoneGuideOverlay();
+    };
+
+    root.querySelector('[data-mod="hit-zone-guide-enabled"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneGuideEnabled = event.target.checked;
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-use-game-windows"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneUseGameWindows = event.target.checked;
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-auto-speed"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneAutoSpeed = event.target.checked;
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-perfect-plus-ms"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZonePerfectPlusMs = Math.round(clampNumber(event.target.value, 5, 90, DEFAULT_STATE.hitZonePerfectPlusMs));
+      if (modState.prefs.hitZonePerfectMs < modState.prefs.hitZonePerfectPlusMs) {
+        modState.prefs.hitZonePerfectMs = modState.prefs.hitZonePerfectPlusMs;
+      }
+      updateFormFromPrefs();
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-perfect-ms"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZonePerfectMs = Math.round(clampNumber(event.target.value, modState.prefs.hitZonePerfectPlusMs, 160, DEFAULT_STATE.hitZonePerfectMs));
+      updateFormFromPrefs();
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-speed-pps"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneSpeedPps = Math.round(clampNumber(event.target.value, 120, 2800, DEFAULT_STATE.hitZoneSpeedPps));
+      modState.hitZoneSpeedEstimatePps = modState.prefs.hitZoneSpeedPps;
+      updateFormFromPrefs();
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-anchor"]')?.addEventListener('input', (event) => {
+      modState.prefs.hitZoneAnchor = Math.round(clampNumber(event.target.value, 35, 96, DEFAULT_STATE.hitZoneAnchor));
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-lane-width"]')?.addEventListener('input', (event) => {
+      modState.prefs.hitZoneLaneWidth = Math.round(clampNumber(event.target.value, 220, 980, DEFAULT_STATE.hitZoneLaneWidth));
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-opacity"]')?.addEventListener('input', (event) => {
+      modState.prefs.hitZoneOverlayOpacity = clampNumber(event.target.value, 0.15, 1, DEFAULT_STATE.hitZoneOverlayOpacity);
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-center-line"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneCenterLine = event.target.checked;
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="hit-zone-show-legend"]')?.addEventListener('change', (event) => {
+      modState.prefs.hitZoneShowLegend = event.target.checked;
+      refreshHitZoneRuntime();
+    });
+
+    root.querySelector('[data-mod="practice-mode-enabled"]')?.addEventListener('change', (event) => {
+      modState.prefs.practiceModeEnabled = event.target.checked;
+      if (!modState.prefs.practiceModeEnabled) {
+        clearPracticeCheckpoints('Practice mode disabled. Cleared checkpoints.');
+      }
+      persistPrefs();
+      updateFormFromPrefs();
+      updatePracticeModeOverlay();
+    });
+
+    root.querySelector('[data-mod="practice-bar-max-width"]')?.addEventListener('input', (event) => {
+      modState.prefs.practiceBarMaxWidth = Math.round(clampNumber(event.target.value, 360, 1400, DEFAULT_STATE.practiceBarMaxWidth));
+      persistPrefs();
+      updatePracticeModeOverlay();
+    });
+
+    root.querySelector('[data-mod="practice-bar-bottom"]')?.addEventListener('input', (event) => {
+      modState.prefs.practiceBarBottom = Math.round(clampNumber(event.target.value, 0, 240, DEFAULT_STATE.practiceBarBottom));
+      persistPrefs();
+      updatePracticeModeOverlay();
+    });
+
+    root.querySelector('[data-mod="practice-bar-opacity"]')?.addEventListener('input', (event) => {
+      modState.prefs.practiceBarOpacity = clampNumber(event.target.value, 0.3, 1, DEFAULT_STATE.practiceBarOpacity);
+      persistPrefs();
+      updatePracticeModeOverlay();
     });
 
     root.querySelector('[data-mod="scene-filter"]')?.addEventListener('change', (event) => {
